@@ -1,0 +1,66 @@
+/* Design tokens. Parchment and ink, after Renaissance woodcuts; colour is
+   rare and means something:
+     red   — needs you (waiting, errors, focus)
+     blue  — running, live
+     green — done, added
+     gold  — the agent; drift; things to notice
+   Only these variables carry colour; components never use raw values. */
+
+:root {
+  color-scheme: light;
+  --paper: #efeadf;
+  --paper-2: #e6dfcf;
+  --card: #f7f3eb;
+  --glow: #fbf8f0;
+  --ink: #1f1b16;
+  --ink-2: #5b5348;
+  --ink-3: #8c8272;
+  --red: #8e3322;
+  --green: #46684a;
+  --blue: #30506f;
+  --gold: #98722a;
+
+  --hair: color-mix(in oklab, var(--ink) 55%, transparent);
+  --line: color-mix(in oklab, var(--ink) 17%, transparent);
+  --wash: color-mix(in oklab, var(--ink) 5%, transparent);
+
+  --f-display: "IM Fell English", "Iowan Old Style", Georgia, serif;
+  --f-ui: "Source Serif 4", "Iowan Old Style", Georgia, serif;
+  --f-mono: "Fragment Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --side-w: 208px;
+  --list-w: 300px;
+  --measure: 72ch;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #15130f;
+    --paper-2: #1e1b16;
+    --card: #1b1814;
+    --glow: #3a3020;
+    --ink: #ebe2cd;
+    --ink-2: #b4a990;
+    --ink-3: #7f7462;
+    --red: #d47b64;
+    --green: #93b48d;
+    --blue: #93aecb;
+    --gold: #d6b061;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #15130f;
+  --paper-2: #1e1b16;
+  --card: #1b1814;
+  --glow: #3a3020;
+  --ink: #ebe2cd;
+  --ink-2: #b4a990;
+  --ink-3: #7f7462;
+  --red: #d47b64;
+  --green: #93b48d;
+  --blue: #93aecb;
+  --gold: #d6b061;
+}

@@ -1,0 +1,1356 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Atelier from One Window</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=Fragment+Mono&display=swap">
+<style>
+/* Layout: a step stepper across the top (0–5 are a real build order) plus a Pattern language tab. Each step = an app window mockup on the left, notes on the right. Routing is :target; in-window selection is radio + :has(). */
+:root{
+  --paper:#efeadf; --paper-2:#e6dfcf; --card:#f7f3eb; --glow:#fbf8f0;
+  --ink:#1f1b16; --ink-2:#5b5348; --ink-3:#8c8272;
+  --red:#8e3322; --green:#46684a; --blue:#30506f; --gold:#98722a;
+  --hair:color-mix(in oklab,var(--ink) 55%,transparent);
+  --line:color-mix(in oklab,var(--ink) 17%,transparent);
+  --wash:color-mix(in oklab,var(--ink) 5%,transparent);
+  --f-display:"IM Fell English","Iowan Old Style",Georgia,serif;
+  --f-ui:"Source Serif 4","Iowan Old Style",Georgia,serif;
+  --f-mono:"Fragment Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#15130f; --paper-2:#1e1b16; --card:#1b1814; --glow:#3a3020;
+  --ink:#ebe2cd; --ink-2:#b4a990; --ink-3:#7f7462;
+  --red:#d47b64; --green:#93b48d; --blue:#93aecb; --gold:#d6b061; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#15130f; --paper-2:#1e1b16; --card:#1b1814; --glow:#3a3020;
+  --ink:#ebe2cd; --ink-2:#b4a990; --ink-3:#7f7462;
+  --red:#d47b64; --green:#93b48d; --blue:#93aecb; --gold:#d6b061; color-scheme:dark}
+
+*,*::before,*::after{box-sizing:border-box}
+body{background:var(--paper); color:var(--ink); font:400 15px/1.45 var(--f-ui)}
+a{color:inherit; text-decoration-color:var(--line); text-underline-offset:3px}
+a:hover{text-decoration-color:var(--red)}
+:focus-visible{outline:1.5px solid var(--red); outline-offset:2px}
+h1,h2,h3,h4{font-family:var(--f-display); font-weight:400; margin:0; line-height:1.15; text-wrap:balance}
+p{margin:0}
+code,.mono{font-family:var(--f-mono); font-size:.84em; font-variant-numeric:tabular-nums}
+.muted{color:var(--ink-2)} .faint{color:var(--ink-3)}
+.cap{font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-2)}
+.sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); opacity:0}
+.wrap{padding-left:max(16px,env(safe-area-inset-left,0px)); padding-right:max(16px,env(safe-area-inset-right,0px)); max-width:1500px; margin:0 auto}
+
+/* page header */
+.head{display:grid; grid-template-columns:auto 1fr; gap:6px 22px; align-items:end; padding-block:22px 16px; border-bottom:1px solid var(--ink)}
+.emblem{grid-row:span 2; width:58px; height:58px; position:relative; border:1px solid var(--ink); overflow:hidden;
+  background:repeating-conic-gradient(from 0deg at 50% 100%,var(--hair) 0 .8deg,transparent .8deg 8deg),var(--card)}
+.emblem::after{content:""; position:absolute; left:16px; bottom:-14px; width:26px; height:26px; border-radius:50%; border:1px solid var(--ink); background:var(--glow)}
+.head h1{font-size:clamp(26px,3.4vw,38px)}
+.head p{color:var(--ink-2); max-width:78ch; font-size:15.5px}
+.steps{display:flex; gap:0; overflow-x:auto; border-bottom:1px solid var(--line); margin-top:4px}
+.steps a{display:grid; padding:10px 16px 9px; text-decoration:none; border-bottom:2px solid transparent; min-width:max-content; color:var(--ink-2)}
+.steps a b{font:400 17px var(--f-display); color:var(--ink)}
+.steps a small{font:11.5px var(--f-mono); color:var(--ink-3)}
+.steps a.pl{margin-left:auto; border-left:1px solid var(--line)}
+.steps a:hover b{color:var(--red)}
+.doc:not(:has(.view:target)) .steps a[href="#s0"],
+.doc:has(#s0:target) .steps a[href="#s0"],.doc:has(#s1:target) .steps a[href="#s1"],.doc:has(#s2:target) .steps a[href="#s2"],
+.doc:has(#s3:target) .steps a[href="#s3"],.doc:has(#s4:target) .steps a[href="#s4"],.doc:has(#s5:target) .steps a[href="#s5"],
+.doc:has(#patterns:target) .steps a[href="#patterns"]{border-bottom-color:var(--red)}
+.doc:not(:has(.view:target)) .steps a[href="#s0"] b,
+.doc:has(#s0:target) .steps a[href="#s0"] b,.doc:has(#s1:target) .steps a[href="#s1"] b,.doc:has(#s2:target) .steps a[href="#s2"] b,
+.doc:has(#s3:target) .steps a[href="#s3"] b,.doc:has(#s4:target) .steps a[href="#s4"] b,.doc:has(#s5:target) .steps a[href="#s5"] b,
+.doc:has(#patterns:target) .steps a[href="#patterns"] b{color:var(--red)}
+
+.view{display:none; scroll-margin-top:300vh; padding-block:22px 64px}
+.view:target{display:block}
+main:not(:has(.view:target)) #s0{display:block}
+.stage{display:grid; grid-template-columns:minmax(0,1fr) 330px; gap:30px; align-items:start; isolation:isolate}
+
+/* notes column */
+.notes{display:grid; gap:18px; align-content:start}
+.notes .num{font:italic 46px/0.9 var(--f-display); color:var(--red)}
+.notes h2{font-size:26px}
+.notes .lede{font-size:15.5px; line-height:1.5}
+.notes h3{font:11px var(--f-ui); letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2); border-bottom:1px solid var(--line); padding-bottom:5px; margin-bottom:8px}
+.notes ul{margin:0; padding:0 0 0 16px; display:grid; gap:6px; font-size:14px; color:var(--ink-2)}
+.notes ul li::marker{color:var(--ink-3)}
+.notes pre{margin:0; padding:9px 11px; border:1px solid var(--line); background:var(--card); font:11.5px/1.6 var(--f-mono); overflow-x:auto; color:var(--ink-2)}
+.notes pre .k{color:var(--blue)} .notes pre .a{color:var(--green)} .notes pre .c{color:var(--ink-3); font-style:italic}
+.pchips{display:flex; gap:6px; flex-wrap:wrap}
+.pchips a{font-size:12.5px; text-decoration:none; border:1px solid var(--line); padding:1px 8px; background:var(--card)}
+.pchips a b{font:500 11px var(--f-mono); color:var(--red); margin-right:4px}
+.pchips a:hover{border-color:var(--ink)}
+.next{font-size:14px; border-top:1px solid var(--ink); padding-top:10px}
+.next a{font-family:var(--f-display); font-size:17px}
+
+/* ============ the app window ============ */
+.win{border:1px solid var(--ink); background:var(--card); position:relative; min-width:0}
+.win::before{content:""; position:absolute; inset:0; translate:6px 6px; z-index:-1; background:repeating-linear-gradient(-45deg,var(--hair) 0 .6px,transparent .6px 3.2px)}
+.tb{height:34px; display:flex; align-items:center; gap:10px; padding:0 12px; border-bottom:1px solid var(--ink); background:var(--paper-2)}
+.tb .lights{display:flex; gap:6px}
+.tb .lights i{width:11px; height:11px; border-radius:50%; border:1px solid var(--ink-2)}
+.tb .ttl{flex:1; text-align:center; font-size:12.5px; color:var(--ink-2)}
+.tb .ttl b{color:var(--ink); font-weight:500}
+.tb .r{font:11px var(--f-mono); color:var(--ink-3)}
+.wb{display:grid; grid-template-columns:178px minmax(0,1fr); min-height:600px}
+.side{border-right:1px solid var(--line); padding:12px 8px; display:grid; gap:2px; align-content:start; background:var(--paper)}
+.side .grp{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3); padding:10px 8px 4px}
+.side .grp:first-child{padding-top:0}
+.side .it{display:flex; justify-content:space-between; align-items:center; padding:5px 8px; font-size:13.5px; border-radius:2px}
+.side .it span{font:11px var(--f-mono); color:var(--ink-3)}
+.side .it.on{background:var(--ink); color:var(--paper)}
+.side .it.on span{color:color-mix(in oklab,var(--paper) 70%,transparent)}
+.side .it.new{box-shadow:inset 2px 0 0 var(--red)}
+.side .it.new::after{content:"new"; font:10px var(--f-mono); color:var(--red); margin-left:6px}
+.side .it.on.new::after{color:var(--paper)}
+.side .repo{display:flex; gap:6px; align-items:center; padding:5px 8px; font-size:13px; color:var(--ink-2)}
+.side .repo i{width:8px; height:8px; border:1px solid var(--ink-2)}
+.main{min-width:0; display:grid}
+
+/* generic list+detail */
+.split{display:grid; grid-template-columns:270px minmax(0,1fr); min-height:100%}
+.list{border-right:1px solid var(--line); display:flex; flex-direction:column; min-width:0}
+.list-h{display:flex; align-items:center; gap:8px; padding:9px 10px; border-bottom:1px solid var(--line)}
+.list-h input{all:unset; flex:1; font:italic 13px var(--f-ui); min-width:0}
+.list-h input::placeholder{color:var(--ink-3)}
+.btn{display:inline-flex; align-items:center; gap:6px; font:500 12.5px var(--f-ui); padding:4px 10px; border:1px solid var(--ink); background:var(--card); color:var(--ink); white-space:nowrap; cursor:pointer; text-decoration:none}
+.btn.dark{background:var(--ink); color:var(--paper)}
+.btn.q{border-color:var(--line)}
+.row{display:grid; grid-template-columns:auto 1fr auto; gap:3px 8px; padding:9px 10px; border-bottom:1px solid var(--line); font-size:13px; align-items:baseline}
+.row.on{background:var(--wash); box-shadow:inset 2px 0 0 var(--ink)}
+.row .t{font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.row .m{grid-column:2/-1; font-size:12px; color:var(--ink-3); display:flex; gap:8px; flex-wrap:wrap}
+.row .tm{font:11px var(--f-mono); color:var(--ink-3)}
+.st{width:8px; height:8px; border-radius:50%; display:inline-block; border:1px solid var(--ink-3); align-self:center}
+.st.run{background:var(--blue); border-color:var(--blue); animation:pulse 1.6s infinite}
+.st.wait{background:var(--red); border-color:var(--red)}
+.st.done{background:transparent}
+@keyframes pulse{50%{opacity:.3}}
+.h{font:10.5px var(--f-mono); padding:0 5px; border:1px solid var(--line); color:var(--ink-2)}
+.h.cc{border-color:color-mix(in oklab,var(--gold) 60%,transparent); color:var(--gold)}
+.h.cx{border-color:color-mix(in oklab,var(--blue) 60%,transparent); color:var(--blue)}
+.grouphd{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3); padding:10px 10px 4px}
+
+/* transcript */
+.detail{display:flex; flex-direction:column; min-width:0}
+.dh{display:flex; gap:10px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap}
+.dh h3{font-size:19px; flex:1; min-width:180px}
+.dh .meta{font-size:12px; color:var(--ink-3); display:flex; gap:10px; flex-wrap:wrap; width:100%}
+.tx{padding:14px 16px; display:grid; gap:12px; align-content:start; flex:1}
+.msg{display:grid; grid-template-columns:22px 1fr; gap:8px; font-size:14px; line-height:1.5}
+.msg .who{width:22px; height:22px; border-radius:50%; border:1px solid var(--ink); display:grid; place-items:center; font:500 9px var(--f-ui); background:var(--card)}
+.msg .who.ag{background:repeating-linear-gradient(90deg,var(--gold) 0 1px,var(--card) 1px 3px)}
+.msg .who.agx{background:repeating-linear-gradient(0deg,var(--blue) 0 1px,var(--card) 1px 3px)}
+.msg.user .body{font-style:italic}
+.tool{font:11.5px var(--f-mono); color:var(--ink-2); border-left:2px solid var(--line); padding:2px 8px; margin:4px 0}
+.tool b{font-weight:400; color:var(--blue)}
+.tool .add{color:var(--green)} .tool .del{color:var(--red)}
+.composer{margin:0 16px 14px; border:1px solid var(--ink); padding:8px 10px; display:flex; gap:8px; align-items:center; background:var(--card)}
+.composer input{all:unset; flex:1; font:italic 13.5px var(--f-ui); min-width:0}
+.composer .waiting{font-size:12px; color:var(--red)}
+.banner{margin:10px; padding:8px 10px; border:1px dashed var(--line); font-size:12.5px; color:var(--ink-2); display:flex; gap:8px; align-items:center}
+.banner b{color:var(--ink); font-weight:500}
+
+/* refs: the universal link chip */
+.ref{display:inline; font:11.5px/1.9 var(--f-mono); padding:1px 5px; border:1px solid var(--line); background:var(--paper); color:var(--ink); text-decoration:none; overflow-wrap:anywhere; -webkit-box-decoration-break:clone; box-decoration-break:clone}
+.ref::before{margin-right:4px}
+.ref::before{font-family:var(--f-ui); font-size:11px; color:var(--ink-3)}
+.ref.code::before{content:"⟨⟩"} .ref.tk::before{content:"#"} .ref.ss::before{content:"◌"} .ref.pg::before{content:"◇"} .ref.nt::before{content:"¶"} .ref.cm::before{content:"⎇"} .ref.tr::before{content:"⋯"} .ref.q::before{content:"?"}
+.ref:hover{border-color:var(--ink)}
+.ref.drift{border-color:var(--gold)} .ref.drift::after{content:"•"; color:var(--gold)}
+
+/* tickets */
+.tk-body{padding:14px 18px; display:grid; gap:14px; align-content:start}
+.tk-body .desc{font-size:14.5px; line-height:1.55; max-width:68ch}
+.tk-body h4{font:11px var(--f-ui); letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2); margin-bottom:6px}
+.fm{display:flex; gap:8px; flex-wrap:wrap; font-size:12.5px; color:var(--ink-2); align-items:center}
+.sess{border:1px solid var(--line); background:var(--paper)}
+.sess .row{border-bottom:1px solid var(--line)}
+.sess .row:last-child{border-bottom:0}
+.start{display:flex; gap:8px; align-items:center; padding:10px; border:1px dashed var(--ink-3); flex-wrap:wrap}
+.start select{font:13px var(--f-ui); background:var(--card); color:var(--ink); border:1px solid var(--line); padding:3px 6px}
+.check{list-style:none; padding:0; margin:0; display:grid; gap:4px; font-size:13.5px}
+.check li::before{content:"☐ "; color:var(--ink-3)}
+.check li.d::before{content:"☑ "; color:var(--green)}
+
+/* step 2: selection popover + backlinks */
+.three{display:grid; grid-template-columns:minmax(0,1fr) 230px; min-height:100%}
+.bl{border-left:1px solid var(--line); padding:12px; display:grid; gap:12px; align-content:start; background:var(--paper); font-size:13px}
+.bl h4{font:11px var(--f-ui); letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2); border-bottom:1px solid var(--line); padding-bottom:4px}
+.bl .li{display:grid; gap:2px}
+.bl .li small{color:var(--ink-3); font-size:11.5px}
+mark.sel{background:color-mix(in oklab,var(--blue) 20%,transparent); color:inherit; position:relative}
+.pop{position:absolute; left:0; top:calc(100% + 6px); z-index:5; display:flex; border:1px solid var(--ink); background:var(--card); font:12px var(--f-ui); font-style:normal; white-space:nowrap; box-shadow:3px 3px 0 var(--line)}
+.pop span{padding:4px 9px; border-right:1px solid var(--line)}
+.pop span:last-child{border-right:0}
+.pop span:first-child{background:var(--ink); color:var(--paper)}
+.linkto{border:1px solid var(--ink); background:var(--card); padding:8px; display:grid; gap:4px; font-size:12.5px; box-shadow:3px 3px 0 var(--line)}
+.linkto input{all:unset; border-bottom:1px solid var(--line); padding:2px 0 4px; font:italic 12.5px var(--f-ui)}
+.linkto div{display:flex; justify-content:space-between; gap:8px; padding:2px 4px}
+.linkto div.on{background:var(--wash)}
+
+/* step 3: page viewer */
+.pageview{display:grid; grid-template-columns:minmax(0,1fr) 290px; min-height:100%}
+.pgv{min-width:0; display:flex; flex-direction:column}
+.pg-bar{display:flex; gap:8px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); font-size:12px; color:var(--ink-2); flex-wrap:wrap; background:var(--paper)}
+.pg-bar .grow{flex:1}
+.pg-bar .live{color:var(--blue)}
+.frame{padding:18px 20px 20px; flex:1; background:var(--card); position:relative}
+.frame .fl{position:absolute; top:6px; right:8px; font:10px var(--f-mono); color:var(--ink-3)}
+.frame h2{font-size:28px}
+.frame .sub{font-style:italic; color:var(--ink-2); margin:2px 0 16px; font-size:14px}
+.flow-scroll{overflow-x:auto; padding:6px 4px 10px}
+.flow{display:grid; min-width:500px; grid-template-columns:repeat(3,minmax(0,1fr) 20px) minmax(0,1fr); grid-template-rows:auto 30px auto; isolation:isolate}
+.flow > .nd:last-of-type{grid-column-end:span 1}
+.nd{position:relative; border:1px solid var(--ink); background:var(--card); padding:9px 8px 7px; text-align:center; cursor:pointer; display:block}
+.nd::before{content:""; position:absolute; inset:0; translate:4px 4px; z-index:-1; background:repeating-linear-gradient(-45deg,var(--hair) 0 .6px,transparent .6px 3px)}
+.nd b{display:block; font:400 14px/1.1 var(--f-display)}
+.nd small{display:block; font:10px var(--f-mono); color:var(--ink-3); margin-top:3px; overflow-wrap:anywhere}
+.nd .lc{position:absolute; top:3px; left:5px; font:10px var(--f-mono); color:var(--ink-3)}
+.nd .dr{position:absolute; top:-5px; right:-5px; width:10px; height:10px; border-radius:50%; background:var(--gold); border:2px solid var(--card)}
+.nd .lv{position:absolute; inset:-5px; border:1px solid var(--blue); animation:pulse 1.8s infinite; pointer-events:none}
+.nd:hover{background:var(--paper)}
+.ext{border-style:dashed; cursor:default}
+.ar{align-self:center; height:9px; position:relative; background:linear-gradient(var(--ink),var(--ink)) center/100% 1px no-repeat}
+.ar::after{content:""; position:absolute; right:0; top:0; width:8px; height:9px; background:var(--ink); clip-path:polygon(0 0,100% 50%,0 100%,30% 50%)}
+.vr{justify-self:center; width:9px; position:relative; background:linear-gradient(var(--ink),var(--ink)) center/1px 100% no-repeat}
+.vr::after{content:""; position:absolute; bottom:0; width:9px; height:8px; background:var(--ink); clip-path:polygon(0 0,50% 100%,100% 0,50% 30%)}
+.prose{margin-top:16px; font-size:14.5px; line-height:1.7; max-width:72ch; display:grid; gap:10px}
+.pv:has(#n-router:checked) label[for="n-router"],.pv:has(#n-auth:checked) label[for="n-auth"],
+.pv:has(#n-handler:checked) label[for="n-handler"],.pv:has(#n-worker:checked) label[for="n-worker"]{box-shadow:0 0 0 3px var(--card),0 0 0 4px var(--red)}
+.pv:has(#n-router:focus-visible) label[for="n-router"],.pv:has(#n-auth:focus-visible) label[for="n-auth"],
+.pv:has(#n-handler:focus-visible) label[for="n-handler"],.pv:has(#n-worker:focus-visible) label[for="n-worker"]{outline:1.5px solid var(--red); outline-offset:6px}
+.peek{border-left:1px solid var(--line); background:var(--paper); display:flex; flex-direction:column; min-width:0}
+.pk{display:none; padding:12px; gap:12px; align-content:start}
+.pv:has(#n-router:checked) .pk-router,.pv:has(#n-auth:checked) .pk-auth,.pv:has(#n-handler:checked) .pk-handler,.pv:has(#n-worker:checked) .pk-worker{display:grid}
+.pk h4{font:400 18px var(--f-display)}
+.pk .addr{font:11px var(--f-mono); color:var(--ink-3); overflow-wrap:anywhere}
+.snip{border:1px solid var(--line); background:var(--card); font:11px/1.6 var(--f-mono); overflow-x:auto}
+.snip .fh{padding:3px 8px; border-bottom:1px solid var(--line); color:var(--ink-3); display:flex; justify-content:space-between; gap:6px}
+.snip pre{margin:0; padding:6px 0}
+.snip .l{display:grid; grid-template-columns:30px max-content; padding-right:8px}
+.snip .l > span:first-child{color:var(--ink-3); text-align:right; padding-right:8px}
+.snip .l > span{white-space:pre}
+.snip .l.chg{background:color-mix(in oklab,var(--gold) 14%,transparent)}
+.snip .kw{color:var(--blue)} .snip .fn{color:var(--red)} .snip .cm{color:var(--ink-3); font-style:italic}
+.pk .links{display:grid; gap:6px; font-size:12.5px}
+.pk .links div{display:grid; gap:1px}
+.pk .links small{color:var(--ink-3); font-size:11.5px}
+.pk .note{font-size:12px; color:var(--gold); border:1px dashed var(--gold); padding:5px 8px}
+.pk .acts{display:flex; gap:6px; flex-wrap:wrap}
+
+/* step 4: around this */
+.around{display:grid; grid-template-columns:minmax(0,1fr) 300px; min-height:100%}
+.codev{min-width:0; display:flex; flex-direction:column}
+.codev .fh{display:flex; gap:10px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); font:12px var(--f-mono); color:var(--ink-2); flex-wrap:wrap}
+.codev .src{flex:1; overflow-x:auto; background:var(--card); padding:8px 0; font:12px/1.75 var(--f-mono)}
+.codev .src .l{display:grid; grid-template-columns:44px 14px max-content; padding-right:16px; position:relative}
+.codev .src .l > span{white-space:pre}
+.codev .src .l > span:first-child{color:var(--ink-3); text-align:right; padding-right:8px}
+.codev .src .l.in{background:color-mix(in oklab,var(--blue) 10%,transparent)}
+.codev .src .l.in > span:nth-child(2){background:var(--blue)}
+.codev .src .l.why{background:color-mix(in oklab,var(--blue) 22%,transparent)}
+.codev .src .kw{color:var(--blue)} .code .src .fn{color:var(--red)} .code .src .cm{color:var(--ink-3); font-style:italic} .code .src .s{color:var(--green)}
+.whycard{margin:0 14px 12px 58px; border:1px solid var(--ink); background:var(--card); padding:9px 11px; font-size:13px; display:grid; gap:5px; box-shadow:3px 3px 0 var(--line); max-width:520px}
+.whycard .cap{color:var(--blue)}
+.whycard q{font-style:italic; quotes:"“" "”"}
+.trail{display:flex; align-items:center; gap:10px; padding:9px 14px; border-top:1px solid var(--ink); background:var(--paper); font-size:13px; flex-wrap:wrap}
+.trail .dots{display:flex; gap:5px}
+.trail .dots i{width:9px; height:9px; border-radius:50%; border:1px solid var(--ink)}
+.trail .dots i.d{background:var(--ink)} .trail .dots i.c{background:var(--red); border-color:var(--red); box-shadow:0 0 0 2px var(--paper),0 0 0 3px var(--red)}
+.trail .grow{flex:1; min-width:120px}
+.ar-panel{border-left:1px solid var(--line); background:var(--paper); padding:12px; display:grid; gap:14px; align-content:start; font-size:13px}
+.ar-panel h4{font:11px var(--f-ui); letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2); border-bottom:1px solid var(--line); padding-bottom:4px; display:flex; justify-content:space-between}
+.ar-panel h4 span{color:var(--ink-3); letter-spacing:0}
+.ar-panel .li{display:grid; gap:1px; padding:3px 0}
+.ar-panel .li small{color:var(--ink-3); font-size:11.5px}
+.ar-panel .now{border:1px solid var(--blue); padding:6px 8px; color:var(--blue); display:flex; gap:8px; align-items:center}
+.ar-title{font:400 18px var(--f-display)}
+
+/* step 5: since you left */
+.digest{padding:16px 22px; display:grid; gap:20px; align-content:start; max-width:860px}
+.digest h3{font-size:24px}
+.digest .when{font-size:13px; color:var(--ink-2); margin-top:2px}
+.dsec h4{font:11px var(--f-ui); letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2); display:flex; justify-content:space-between; border-bottom:1px solid var(--ink); padding-bottom:5px; margin-bottom:8px}
+.dsec h4 span{letter-spacing:0; color:var(--ink-3)}
+.hand{display:grid; grid-template-columns:auto 1fr auto; gap:4px 10px; padding:8px 0; border-bottom:1px dotted var(--line); font-size:13.5px; align-items:baseline}
+.hand .t{font-weight:500}
+.hand p{grid-column:2/-1; color:var(--ink-2); font-size:13px}
+.qa{border:1px solid var(--line); background:var(--card); padding:9px 11px; display:grid; gap:6px; font-size:13.5px; margin-bottom:8px}
+.qa .q{font-style:italic}
+.qa .ans{display:flex; gap:6px; flex-wrap:wrap}
+.qa .ans span{border:1px solid var(--ink); padding:1px 9px; font-size:12.5px; cursor:pointer}
+.qa .ans input{all:unset; flex:1; min-width:120px; border-bottom:1px solid var(--line); font:italic 12.5px var(--f-ui)}
+.fresh{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px}
+.fc{border:1px solid var(--line); background:var(--card); display:grid; grid-template-rows:70px auto}
+.fc .th{border-bottom:1px solid var(--line); position:relative; overflow:hidden; background:repeating-linear-gradient(0deg,var(--line) 0 .6px,transparent .6px 4px)}
+.fc .th i{position:absolute; border:1px solid var(--ink-2); background:var(--card)}
+.fc .bd{padding:7px 9px; display:grid; gap:4px; font-size:12.5px}
+.fc .bd b{font-weight:500; font-size:13.5px}
+.fc .bd .acts{display:flex; gap:6px; margin-top:2px}
+.fc .bd .acts span{font-size:11.5px; border:1px solid var(--line); padding:0 7px}
+.fc .bd .acts span.k{border-color:var(--ink)}
+.fc.fading{opacity:.55}
+.drift-row{display:flex; gap:10px; align-items:center; padding:9px 11px; border:1px dashed var(--gold); font-size:13.5px; flex-wrap:wrap}
+.drift-row .grow{flex:1; min-width:180px}
+
+/* ============ patterns ============ */
+.pl-intro{display:grid; grid-template-columns:minmax(0,1fr) 380px; gap:36px; margin-bottom:30px; align-items:start}
+.pl-intro h2{font-size:34px}
+.pl-intro p{font-size:16px; line-height:1.6; color:var(--ink-2); max-width:68ch; margin-top:8px}
+.pl-intro p b{color:var(--ink); font-weight:500}
+.grammar{border:1px solid var(--ink); background:var(--card)}
+.grammar h3{font-size:18px; padding:9px 12px; border-bottom:1px solid var(--line)}
+.grammar table{width:100%; border-collapse:collapse; font-size:12.5px}
+.grammar td{padding:5px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+.grammar td:first-child{font:11.5px var(--f-mono); color:var(--ink); white-space:nowrap}
+.grammar td:last-child{color:var(--ink-2)}
+.grammar tr:last-child td{border-bottom:0}
+.gtable{overflow-x:auto}
+.scale{margin-top:30px}
+.scale-h{display:flex; align-items:baseline; gap:14px; border-bottom:1px solid var(--ink); padding-bottom:6px; margin-bottom:14px; flex-wrap:wrap}
+.scale-h h3{font-size:24px}
+.scale-h p{font-style:italic; color:var(--ink-2); font-size:14px}
+.pats{display:grid; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); gap:14px}
+.pat{border:1px solid var(--line); background:var(--card); padding:12px 14px 11px; display:grid; gap:6px; align-content:start}
+.pat .top{display:flex; align-items:baseline; gap:8px}
+.pat .n{font:12px var(--f-mono); color:var(--red)}
+.pat h4{font-size:19px; flex:1}
+.pat .stars{font-size:13px; color:var(--gold); letter-spacing:.1em}
+.pat .prob{font-size:13.5px; font-style:italic; color:var(--ink-2)}
+.pat .then{font-size:13.5px; line-height:1.5}
+.pat .then b{font:500 11px var(--f-ui); letter-spacing:.1em; text-transform:uppercase}
+.pat .con{font:11px var(--f-mono); color:var(--ink-3); border-top:1px dotted var(--line); padding-top:5px}
+.pat.core{border-color:var(--ink)}
+.howto{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; margin-top:34px}
+.howto .box{border-top:2px solid var(--ink); padding-top:10px; display:grid; gap:8px; align-content:start}
+.howto h3{font-size:20px}
+.howto p{font-size:14px; color:var(--ink-2); line-height:1.5}
+.howto pre{margin:0; padding:9px 11px; border:1px solid var(--line); background:var(--card); font:11.5px/1.6 var(--f-mono); overflow-x:auto; color:var(--ink-2)}
+.howto pre .k{color:var(--blue)} .howto pre .a{color:var(--green)} .howto pre .c{color:var(--ink-3); font-style:italic}
+
+/* ============ step 6: forks ============ */
+.doc:has(#s6:target) .steps a[href="#s6"],.doc:has(#s7:target) .steps a[href="#s7"],.doc:has(#s8:target) .steps a[href="#s8"]{border-bottom-color:var(--red)}
+.doc:has(#s6:target) .steps a[href="#s6"] b,.doc:has(#s7:target) .steps a[href="#s7"] b,.doc:has(#s8:target) .steps a[href="#s8"] b{color:var(--red)}
+.forkview{display:grid; grid-template-columns:minmax(0,1fr) 330px; min-height:100%}
+.tree{padding:12px 0; min-width:0}
+.tree-h{display:flex; gap:8px; align-items:baseline; padding:0 14px 10px; border-bottom:1px solid var(--line); margin-bottom:4px; flex-wrap:wrap}
+.tree-h h3{font-size:19px; flex:1}
+.trow{display:grid; grid-template-columns:62px 40px minmax(0,1fr); gap:0 8px; align-items:stretch; padding:0 14px; min-height:44px}
+.trow .ln{display:grid; grid-template-columns:repeat(3,20px); align-self:stretch}
+.trow .ln b{position:relative; display:block; --c:var(--ink)}
+.trow .ln b:nth-child(2){--c:var(--blue)} .trow .ln b:nth-child(3){--c:var(--gold)}
+.trow .ln b.l::before,.trow .ln b.d::before{content:""; position:absolute; left:9px; top:0; bottom:0; border-left:1.5px solid var(--c)}
+.trow .ln b.s::before{content:""; position:absolute; left:9px; top:50%; bottom:0; border-left:1.5px solid var(--c)}
+.trow .ln b.e::before{content:""; position:absolute; left:9px; top:0; bottom:50%; border-left:1.5px solid var(--c)}
+.trow .ln b.d::after,.trow .ln b.s::after,.trow .ln b.e::after,.trow .ln b.f::after{content:""; position:absolute; left:4px; top:calc(50% - 6px); width:12px; height:12px; border-radius:50%; border:1.5px solid var(--c); background:var(--card)}
+.trow .ln b.f::before{content:""; position:absolute; left:9px; top:0; bottom:0; border-left:1.5px solid var(--c)}
+.trow .ln b.f::after{background:var(--red); border-color:var(--red); box-shadow:0 0 0 3px var(--card),0 0 0 4px var(--red)}
+.trow .ln b.hb::before{content:""; position:absolute; left:0; right:0; top:50%; border-top:1.5px dashed var(--blue)}
+.trow .ln b.hb::after{content:""; position:absolute; left:9px; top:50%; bottom:0; border-left:1.5px solid var(--blue)}
+.trow .ln b.he::before{content:""; position:absolute; left:0; width:10px; top:50%; border-top:1.5px dashed var(--gold)}
+.trow .ln b.he::after{content:""; position:absolute; left:9px; top:50%; bottom:0; border-left:1.5px solid var(--gold)}
+.trow .ln b.done::after{background:var(--c)}
+.trow .ln b.x::after{background:var(--card); border-style:dashed}
+.trow .mm{font:11px var(--f-mono); color:var(--ink-3); align-self:center}
+.trow .tx2{align-self:center; font-size:13.5px; padding:6px 0; min-width:0}
+.trow .tx2 small{display:block; font-size:12px; color:var(--ink-3)}
+.trow.sel{background:color-mix(in oklab,var(--red) 8%,transparent)}
+.trow .ck{font:10.5px var(--f-mono); color:var(--ink-3); border:1px solid var(--line); padding:0 4px; margin-left:4px}
+.fp{border-left:1px solid var(--line); background:var(--paper); padding:12px 14px; display:grid; gap:12px; align-content:start; font-size:13px}
+.fp h4{font:400 19px var(--f-display)}
+.fp .lbl{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2); margin-bottom:4px}
+.fp .state{border:1px solid var(--line); background:var(--card); padding:7px 9px; display:grid; gap:2px}
+.opt{display:grid; grid-template-columns:16px 1fr; gap:6px; padding:6px 8px; border:1px solid var(--line); background:var(--card); margin-bottom:4px}
+.opt i{width:12px; height:12px; border-radius:50%; border:1px solid var(--ink); margin-top:3px}
+.opt.on{border-color:var(--ink)} .opt.on i{background:radial-gradient(circle,var(--ink) 0 3px,transparent 3.5px)}
+.opt b{font-weight:500} .opt small{display:block; color:var(--ink-2); font-size:12px}
+.opt .fid{font:10.5px var(--f-mono); color:var(--green); margin-left:4px}
+.opt .fid.mid{color:var(--gold)}
+.fanrow{display:grid; grid-template-columns:auto 1fr; gap:6px; align-items:start; border:1px solid var(--line); background:var(--card); padding:6px 8px; margin-bottom:4px}
+.fanrow p{font-style:italic; font-size:12.5px}
+.fp textarea{width:100%; font:italic 12.5px var(--f-ui); border:1px solid var(--line); background:var(--card); color:var(--ink); padding:6px; resize:none; height:46px}
+
+/* ============ step 7: subagents ============ */
+.subview{display:grid; grid-template-columns:minmax(0,1fr) 340px; min-height:100%}
+.budget{padding:10px 14px; border-bottom:1px solid var(--line); display:grid; gap:6px; font-size:12.5px; color:var(--ink-2)}
+.budget .bar{display:flex; height:10px; border:1px solid var(--ink); background:var(--card)}
+.budget .bar i{display:block; border-right:1px solid var(--card)}
+.ag-node{display:grid; grid-template-columns:22px minmax(0,1fr) auto; gap:2px 8px; padding:8px 14px 8px calc(14px + var(--d,0) * 26px); border-bottom:1px solid var(--line); font-size:13.5px; position:relative; align-items:baseline}
+.ag-node[style*="--d:1"]::before{content:""; position:absolute; left:24px; top:0; bottom:0; border-left:1px solid var(--line)}
+.ag-node[style*="--d:1"]::after{content:""; position:absolute; left:24px; top:18px; width:12px; border-top:1px solid var(--line)}
+.ag-node .k{width:16px; height:16px; border-radius:50%; border:1.5px solid var(--ink); align-self:center; justify-self:center}
+.ag-node .k.obs{border-style:dotted; border-width:2px}
+.ag-node .k.cc{background:repeating-linear-gradient(90deg,var(--gold) 0 1px,var(--card) 1px 3px)}
+.ag-node .k.cx{background:repeating-linear-gradient(0deg,var(--blue) 0 1px,var(--card) 1px 3px)}
+.ag-node .t{font-weight:500; min-width:0}
+.ag-node .c{font:11px var(--f-mono); color:var(--ink-3); white-space:nowrap}
+.ag-node .m{grid-column:2/-1; display:flex; gap:6px 10px; flex-wrap:wrap; font-size:12px; color:var(--ink-2); align-items:center}
+.ws{font:10.5px var(--f-mono); padding:0 5px; border:1px solid var(--line)}
+.ws.wt{border-color:var(--ink); color:var(--ink)} .ws.ro{border-style:dashed} .ws.pg{border-color:var(--gold); color:var(--gold)}
+.ag-node.sel{background:color-mix(in oklab,var(--blue) 8%,transparent); box-shadow:inset 2px 0 0 var(--blue)}
+.sd{border-left:1px solid var(--line); background:var(--paper); padding:12px 14px; display:grid; gap:12px; align-content:start; font-size:13px}
+.sd h4{font:400 19px var(--f-display)}
+.sd > *,.fp > *,.prail > *{min-width:0}
+.sd pre{margin:0; padding:8px 10px; border:1px solid var(--line); background:var(--card); font:11px/1.6 var(--f-mono); overflow-x:auto; color:var(--ink-2)}
+.sd pre .k{color:var(--blue)} .sd pre .a{color:var(--green)} .sd pre .c{color:var(--ink-3); font-style:italic}
+.sd .ret{border:1px solid var(--ink); background:var(--card); padding:8px 10px; display:grid; gap:4px}
+.legend2{display:flex; gap:14px; flex-wrap:wrap; padding:10px 14px; font-size:12px; color:var(--ink-2); border-top:1px solid var(--line)}
+.legend2 span{display:inline-flex; gap:6px; align-items:center}
+.legend2 i{width:12px; height:12px; border-radius:50%; border:1.5px solid var(--ink); display:inline-block}
+.legend2 i.obs{border-style:dotted; border-width:2px}
+
+/* ============ step 8: proposals ============ */
+.propv{counter-reset:acc}
+.prop{display:grid; grid-template-columns:minmax(0,1fr) 270px; min-height:100%}
+.pbody{min-width:0; display:grid; align-content:start}
+.ph{padding:12px 18px 10px; border-bottom:1px solid var(--ink); background:var(--paper); display:grid; gap:6px}
+.ph .row1{display:flex; gap:10px; align-items:baseline; flex-wrap:wrap}
+.ph h3{font-size:24px; flex:1; min-width:200px}
+.ph .id{font:12px var(--f-mono); color:var(--ink-3)}
+.ph .meta{display:flex; gap:6px 14px; flex-wrap:wrap; font-size:12.5px; color:var(--ink-2); align-items:center}
+.vers{display:inline-flex; border:1px solid var(--ink)}
+.vers span{font:11px var(--f-mono); padding:1px 7px; border-right:1px solid var(--line)}
+.vers span:last-child{border-right:0}
+.vers span.on{background:var(--ink); color:var(--paper)}
+.psec{padding:14px 18px; border-bottom:1px solid var(--line); display:grid; gap:8px}
+.psec > h4{font:11px var(--f-ui); letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2); display:flex; justify-content:space-between; gap:8px}
+.psec > h4 span{letter-spacing:0; text-transform:none; color:var(--ink-3)}
+.psec p{font-size:14px; line-height:1.6; max-width:70ch}
+.doubts{border:1px dashed var(--gold); background:repeating-linear-gradient(-45deg,color-mix(in oklab,var(--gold) 7%,transparent) 0 .6px,transparent .6px 5px); padding:10px 12px; display:grid; gap:6px}
+.doubts h4{font:11px var(--f-ui); letter-spacing:.1em; text-transform:uppercase; color:var(--gold)}
+.doubts ol{margin:0; padding-left:18px; display:grid; gap:4px; font-size:13.5px}
+.beh{display:grid; grid-template-columns:56px 1fr; gap:6px 10px; align-items:center; font-size:12px; color:var(--ink-2)}
+.beh .tl{display:flex; gap:3px; align-items:center; flex-wrap:wrap}
+.beh .tl i{width:8px; height:14px; border:1px solid var(--ink); display:block}
+.beh .tl i.ok{background:var(--card)} .beh .tl i.bad{background:var(--ink)} .beh .tl i.blk{border-color:var(--red); background:repeating-linear-gradient(90deg,var(--red) 0 1px,transparent 1px 2.5px)}
+.beh .tl span{font:10.5px var(--f-mono); color:var(--red); padding:0 4px}
+.evid{display:grid; gap:6px}
+.ev{display:grid; grid-template-columns:18px 1fr auto; gap:8px; font-size:13px; align-items:baseline}
+.ev .ok{color:var(--green)}
+.ev small{font-size:12px; color:var(--ink-3)}
+.try{display:flex; gap:10px; align-items:center; border:1px solid var(--ink); padding:7px 10px; background:var(--card); font-size:12.5px; flex-wrap:wrap}
+.try .grow{flex:1; color:var(--ink-2)}
+.parts{display:grid; gap:0; border:1px solid var(--line)}
+.part{display:grid; grid-template-columns:20px 64px minmax(0,1fr) auto; gap:8px; align-items:center; padding:7px 10px; border-bottom:1px solid var(--line); font-size:13px; background:var(--card); cursor:pointer}
+.part:last-child{border-bottom:0}
+.part input:checked{counter-increment:acc}
+.part .bx{width:15px; height:15px; border:1px solid var(--ink); display:grid; place-items:center}
+.part input:checked + .bx{background:var(--ink)}
+.part input:checked + .bx::after{content:""; width:4px; height:8px; border:solid var(--paper); border-width:0 1.5px 1.5px 0; rotate:45deg; translate:0 -1px}
+.part input:focus-visible + .bx{outline:1.5px solid var(--red); outline-offset:2px}
+.part:has(input:not(:checked)){opacity:.55}
+.rg{font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; padding:0 6px; border:1px solid currentColor; justify-self:start}
+.rg.read{color:var(--red)} .rg.cov{color:var(--green)} .rg.skim{color:var(--ink-3)} .rg.nc{color:var(--gold)}
+.part .f{font:11px var(--f-mono); color:var(--ink-3); white-space:nowrap}
+.part .v2{font:10px var(--f-mono); color:var(--blue); border:1px solid var(--blue); padding:0 4px; margin-left:6px}
+.alt{border:1px solid var(--line); overflow-x:auto}
+.alt table{width:100%; border-collapse:collapse; font-size:12.5px; min-width:420px}
+.alt th,.alt td{padding:5px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top}
+.alt th{font-weight:400; color:var(--ink-3)}
+.alt thead th{font-weight:500; color:var(--ink); background:var(--paper)}
+.alt td.w{color:var(--green)} .alt td.l{color:var(--red)}
+.alt tr:last-child td{border-bottom:0}
+.prail{border-left:1px solid var(--line); background:var(--paper); padding:12px; display:grid; gap:14px; align-content:start; font-size:13px}
+.prail h4{font:400 18px var(--f-display)}
+.prail .lbl{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2); margin-bottom:4px}
+.acc-btn{width:100%; justify-content:center}
+.acc-btn::after{content:" " counter(acc) " of 6 parts"}
+.prail textarea{width:100%; font:italic 12.5px var(--f-ui); border:1px solid var(--line); background:var(--card); color:var(--ink); padding:6px; resize:none; height:58px}
+.prail .hint{font-size:11.5px; color:var(--ink-3)}
+.prail .alsol{display:grid; gap:5px}
+.prov-mini{display:grid; gap:3px; font-size:12px; color:var(--ink-2); border-top:1px solid var(--line); padding-top:8px}
+.prov-mini div{padding-left:calc(var(--d,0) * 14px)}
+
+/* responsive */
+@media (max-width:1240px){
+  .stage{grid-template-columns:minmax(0,1fr)}
+  .notes{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+  .pl-intro{grid-template-columns:minmax(0,1fr)}
+  .howto{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:900px){
+  .flow{min-width:500px}
+  .wb{grid-template-columns:minmax(0,1fr)}
+  .side{display:flex; overflow-x:auto; gap:4px; border-right:0; border-bottom:1px solid var(--line); padding:6px}
+  .side .grp,.side .repo{display:none}
+  .side .it{white-space:nowrap}
+  .split,.three,.pageview,.around{grid-template-columns:minmax(0,1fr)}
+  .list{border-right:0; border-bottom:1px solid var(--line); max-height:320px; overflow:auto}
+  .bl,.peek,.ar-panel{border-left:0; border-top:1px solid var(--line)}
+  .fresh{grid-template-columns:minmax(0,1fr)}
+  .whycard{margin-left:14px}
+}
+@media (max-width:1100px){
+  .forkview,.subview,.prop{grid-template-columns:minmax(0,1fr)}
+  .fp,.sd,.prail{border-left:0; border-top:1px solid var(--line)}
+}
+@media (max-width:560px){
+  .trow{grid-template-columns:40px 64px minmax(0,1fr); padding:0 8px}
+  .part{grid-template-columns:20px minmax(0,1fr); }
+  .part .rg{grid-column:2} .part .f{grid-column:2}
+}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important; transition:none!important}}
+</style>
+
+<div class="doc">
+<header class="wrap">
+  <div class="head">
+    <div class="emblem" aria-hidden="true"></div>
+    <h1>Atelier, built up from one window</h1>
+    <p>Start with the smallest useful thing: a desktop window over the coding agents you already pay for. Then add one primitive at a time, through forks, subagents and proposals. Each step should be useful on its own and should make the earlier steps more useful.</p>
+  </div>
+  <nav class="steps" aria-label="Steps">
+    <a href="#s0"><small>step 0</small><b>Sessions</b></a>
+    <a href="#s1"><small>step 1</small><b>Tickets</b></a>
+    <a href="#s2"><small>step 2</small><b>Links</b></a>
+    <a href="#s3"><small>step 3</small><b>Pages</b></a>
+    <a href="#s4"><small>step 4</small><b>Around this</b></a>
+    <a href="#s5"><small>step 5</small><b>Since you left</b></a>
+    <a href="#s6"><small>step 6</small><b>Forks</b></a>
+    <a href="#s7"><small>step 7</small><b>Subagents</b></a>
+    <a href="#s8"><small>step 8</small><b>Proposals</b></a>
+    <a class="pl" href="#patterns"><small>36 patterns</small><b>Pattern language</b></a>
+  </nav>
+</header>
+
+<main class="wrap">
+<!-- ================================================================ STEP 0 -->
+<section class="view" id="s0" aria-labelledby="h0">
+  <div class="stage">
+    <div class="win">
+      <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · commonplace</span><span class="r">⌘N new session</span></div>
+      <div class="wb">
+        <div class="side">
+          <div class="grp">Repos</div>
+          <div class="repo"><i></i>commonplace</div>
+          <div class="repo"><i></i>commonplace-server</div>
+          <div class="repo"><i></i>dotfiles</div>
+          <div class="grp">Views</div>
+          <div class="it on">Sessions <span>214</span></div>
+        </div>
+        <div class="main">
+          <div class="split">
+            <div class="list">
+              <div class="list-h"><input id="q0" placeholder="Search all sessions…" aria-label="Search sessions"><span class="btn dark">New ▾</span></div>
+              <div class="banner"><b>Found 214 sessions</b> in your Claude Code and Codex history. No setup needed.</div>
+              <div class="grouphd">Active</div>
+              <div class="row on"><span class="st wait"></span><span class="t">Rate-limit login attempts</span><span class="tm">4m</span><span class="m"><span class="h cc">claude</span><span>wt/rate-limit</span><span>waiting on you</span></span></div>
+              <div class="row"><span class="st run"></span><span class="t">Fix flaky merge test</span><span class="tm">now</span><span class="m"><span class="h cx">codex</span><span>wt/flaky-merge</span><span>running · 41k tok</span></span></div>
+              <div class="grouphd">Earlier</div>
+              <div class="row"><span class="st done"></span><span class="t">How does a request flow through the server?</span><span class="tm">2h</span><span class="m"><span class="h cc">claude</span><span>main</span></span></div>
+              <div class="row"><span class="st done"></span><span class="t">Rotate session tokens on privilege change</span><span class="tm">Tue</span><span class="m"><span class="h cc">claude</span><span>merged</span></span></div>
+              <div class="row"><span class="st done"></span><span class="t">Export dialog: format picker</span><span class="tm">Mon</span><span class="m"><span class="h cx">codex</span><span>wt/export</span></span></div>
+              <div class="row"><span class="st done"></span><span class="t">Why is IndexedDB slow on Safari?</span><span class="tm">Oct 30</span><span class="m"><span class="h cc">claude</span><span>main</span></span></div>
+            </div>
+            <div class="detail">
+              <div class="dh"><h3>Rate-limit login attempts</h3><span class="btn q">Open in terminal</span><span class="btn q">Resume</span>
+                <div class="meta"><span>Claude Code · your subscription</span><span>worktree wt/rate-limit</span><span>38 messages · 96k tokens</span></div></div>
+              <div class="tx">
+                <div class="msg user"><span class="who">TR</span><div class="body">Login is getting hammered. Add rate limiting per IP and per account. Don’t lock people out for good.</div></div>
+                <div class="msg"><span class="who ag"></span><div class="body">I’ll put a sliding-window limiter in front of <code>verifyPassword</code>, keyed on both IP and account.
+                  <div class="tool"><b>Read</b> server/auth/session.ts</div>
+                  <div class="tool"><b>Edit</b> server/auth/limits.ts <span class="add">+48</span></div>
+                  <div class="tool"><b>Bash</b> pnpm test auth · 31 passed</div></div></div>
+                <div class="msg"><span class="who ag"></span><div class="body">One decision for you: after 10 failed attempts, should the account cool down for 15 minutes, or should we ask for a CAPTCHA instead?</div></div>
+              </div>
+              <div class="composer"><span class="waiting">● waiting</span><input id="c0" placeholder="Reply to Claude Code…" aria-label="Reply"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="notes">
+      <div><div class="num">0</div><h2>A window over the agents you have</h2></div>
+      <p class="lede">The first version adds no new concepts. It lists every Claude Code and Codex session across your repos, shows which ones are waiting on you, and lets you start or resume one in its own worktree.</p>
+      <div><h3>How it’s built</h3><ul>
+        <li>Tauri shell. Rust spawns <code>claude</code> or <code>codex</code> as child processes in a PTY, or headless with streaming JSON output where available.</li>
+        <li>History comes from the agents’ own transcript files, such as <code>~/.claude/projects/…</code> and <code>~/.codex/sessions/…</code>. A file watcher picks up sessions you started in a terminal too.</li>
+        <li>Your logins and subscriptions stay with the CLIs. Atelier never calls a model itself.</li>
+        <li>New sessions get a git worktree each, so several can run at once.</li>
+      </ul></div>
+      <div><h3>Patterns</h3><div class="pchips"><a href="#patterns"><b>1</b>Bring your own agent</a><a href="#patterns"><b>6</b>Session as workbench</a><a href="#patterns"><b>2</b>Plain files</a></div></div>
+      <div class="next">Next: <a href="#s1">Tickets ›</a></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ================================================================ STEP 1 -->
+<section class="view" id="s1" aria-labelledby="h1x">
+  <div class="stage">
+    <div class="win">
+      <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · commonplace</span><span class="r">⌘T new ticket</span></div>
+      <div class="wb">
+        <div class="side">
+          <div class="grp">Views</div>
+          <div class="it">Sessions <span>214</span></div>
+          <div class="it on new">Tickets <span>9</span></div>
+        </div>
+        <div class="main">
+          <div class="split">
+            <div class="list">
+              <div class="list-h"><input id="q1" placeholder="Filter tickets…" aria-label="Filter tickets"><span class="btn dark">New</span></div>
+              <div class="grouphd">Open</div>
+              <div class="row on"><span class="st wait"></span><span class="t">CP-52 Rate-limit login</span><span class="tm">2 sess</span><span class="m"><span>waiting on you</span><span>Tomas</span></span></div>
+              <div class="row"><span class="st run"></span><span class="t">CP-53 Flaky merge test</span><span class="tm">1 sess</span><span class="m"><span>running</span></span></div>
+              <div class="row"><span class="st"></span><span class="t">CP-49 Markdown export</span><span class="tm">0</span><span class="m"><span>not started</span></span></div>
+              <div class="row"><span class="st"></span><span class="t">CP-50 Pause sync on metered</span><span class="tm">0</span><span class="m"><span>not started</span></span></div>
+              <div class="grouphd">Closed this week</div>
+              <div class="row"><span class="st done"></span><span class="t">CP-48 Rotate session tokens</span><span class="tm">3 sess</span><span class="m"><span>Tue</span></span></div>
+            </div>
+            <div class="detail">
+              <div class="dh"><h3>CP-52 · Rate-limit login attempts</h3><span class="btn q">Close</span>
+                <div class="meta"><span>.atelier/tickets/CP-52.md</span><span>opened by Tomas, Tue</span></div></div>
+              <div class="tk-body">
+                <p class="desc">Login is getting credential-stuffed from a few hundred IPs. Limit attempts per IP and per account. Nobody should be locked out permanently, and support needs a way to clear a lockout.</p>
+                <div><h4>Done when</h4><ul class="check"><li class="d">Limiter keyed on IP and account</li><li class="d">Tests for burst and slow-drip attacks</li><li>Decide: cooldown or CAPTCHA</li><li>Support can clear a lockout</li></ul></div>
+                <div><h4>Sessions on this ticket</h4>
+                  <div class="sess">
+                    <div class="row"><span class="st wait"></span><span class="t">Rate-limit login attempts</span><span class="tm">4m</span><span class="m"><span class="h cc">claude</span><span>wt/rate-limit · waiting on you</span></span></div>
+                    <div class="row"><span class="st done"></span><span class="t">Research: limiter algorithms</span><span class="tm">Tue</span><span class="m"><span class="h cx">codex</span><span>read-only · 3 options</span></span></div>
+                  </div></div>
+                <div class="start"><span>Start a session from this ticket with</span><select id="h1" aria-label="Agent"><option>Claude Code</option><option>Codex</option></select><span class="faint">in a new worktree</span><span class="btn dark">Start</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><div class="num">1</div><h2>Tickets that hold sessions</h2></div>
+      <p class="lede">A ticket is the unit of intent; sessions are attempts at it. One ticket can gather a research session, two build attempts and a fix-up, so the history of a change lives in one place.</p>
+      <div><h3>How it’s built</h3><ul>
+        <li>A ticket is a Markdown file with front matter in <code>.atelier/tickets/</code>. Git is the sync and the history.</li>
+        <li>Starting from a ticket seeds the first prompt with its text and tags the session with the ticket ID.</li>
+        <li>An Atelier MCP server is added to each session, so the agent can tick a checkbox or add a note to its own ticket.</li>
+        <li>GitHub or Linear issues can be mirrored later. The file stays the source.</li>
+      </ul></div>
+<pre><span class="c">--- .atelier/tickets/CP-52.md</span>
+<span class="k">title</span>: Rate-limit login attempts
+<span class="k">status</span>: open
+<span class="k">owner</span>: tomas
+<span class="k">sessions</span>: [<span class="a">cc:7f3c</span>, <span class="a">cx:91ad</span>]</pre>
+      <div><h3>Patterns</h3><div class="pchips"><a href="#patterns"><b>7</b>Ticket as a thread of sessions</a><a href="#patterns"><b>2</b>Plain files</a></div></div>
+      <div class="next">Next: <a href="#s2">Links ›</a></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ================================================================ STEP 2 -->
+<section class="view" id="s2" aria-labelledby="h2x">
+  <div class="stage">
+    <div class="win">
+      <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · Rate-limit login attempts</span><span class="r">⌘L link selection</span></div>
+      <div class="wb">
+        <div class="side">
+          <div class="grp">Views</div>
+          <div class="it on">Sessions <span>214</span></div>
+          <div class="it">Tickets <span>9</span></div>
+          <div class="it new">Notes <span>12</span></div>
+        </div>
+        <div class="main">
+          <div class="three">
+            <div class="detail">
+              <div class="dh"><h3>Rate-limit login attempts</h3><a class="ref tk" href="#s1">CP-52</a>
+                <div class="meta"><span>Claude Code · wt/rate-limit</span></div></div>
+              <div class="tx">
+                <div class="msg"><span class="who ag"></span><div class="body">The limiter sits in front of password checking in <a class="ref code" href="#s4">auth/session.ts#L20-41</a>. Keys combine the IP and the account so a botnet spread across IPs still trips the account limit. Tokens are already rotated on privilege change, which came from <a class="ref ss" href="#s4">Rotate session tokens › m22</a>.</div></div>
+                <div class="msg user"><span class="who">TR</span><div class="body"><span style="position:relative"><mark class="sel">Cooldown, not CAPTCHA. 15 minutes, doubling up to an hour.</mark><span class="pop" aria-hidden="true"><span>Link to…</span><span>Quote into note</span><span>Ask about this</span></span></span> Support clears it from the admin page.</div></div>
+                <div class="msg" style="margin-top:28px"><span class="who ag"></span><div class="body">Done. I recorded your answer as a decision and linked it from the ticket: <a class="ref nt" href="#s2">decision: login cooldown</a>.
+                  <div class="tool"><b>Edit</b> server/auth/limits.ts <span class="add">+12</span> <span class="del">−3</span></div></div></div>
+                <div style="padding-left:30px;max-width:300px"><div class="linkto">
+                  <input id="lk" placeholder="Link this to…" aria-label="Link to">
+                  <div class="on"><span><span class="ref tk">CP-52</span> Rate-limit login</span><span class="faint">ticket</span></div>
+                  <div><span><span class="ref pg">request-lifecycle</span></span><span class="faint">page</span></div>
+                  <div><span><span class="ref code">auth/limits.ts#cooldown</span></span><span class="faint">code</span></div>
+                  <div><span><span class="ref nt">new note…</span></span><span class="faint">note</span></div>
+                </div></div>
+              </div>
+            </div>
+            <aside class="bl">
+              <h4>Linked here</h4>
+              <div class="li"><a class="ref tk" href="#s1">CP-52</a><small>this session works on it</small></div>
+              <div class="li"><a class="ref code" href="#s4">auth/session.ts#L20-41</a><small>mentioned in message 6</small></div>
+              <div class="li"><a class="ref ss" href="#s4">Rotate session tokens</a><small>cited for prior decision</small></div>
+              <div class="li"><a class="ref nt" href="#s2">decision: login cooldown</a><small>quoted from message 9</small></div>
+              <h4>Links to this session</h4>
+              <div class="li"><a class="ref tk" href="#s1">CP-52</a><small>sessions list</small></div>
+              <div class="li"><a class="ref cm" href="#s4">commit 4be81a</a><small>made by this session</small></div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><div class="num">2</div><h2>Everything gets an address</h2></div>
+      <p class="lede">This is the step everything else rests on. Every thing (a code range, a session, one message, a ticket, a note, a commit) gets a URL. A link is just that URL written into any text. People and agents link the same way, and the app shows backlinks everywhere.</p>
+<pre><span class="k">at://code</span>/server/auth/session.ts#L20-41
+<span class="k">at://code</span>/server/auth/limits.ts#cooldown
+<span class="k">at://session</span>/cc-7f3c#m22
+<span class="k">at://ticket</span>/CP-52
+<span class="k">at://note</span>/decision-login-cooldown
+<span class="k">at://commit</span>/4be81a</pre>
+      <div><h3>How it’s built</h3><ul>
+        <li>Tauri registers the <code>at://</code> scheme. An indexer scans <code>.atelier/</code>, code comments and session transcripts for those URLs and keeps a link table in SQLite. The table is a cache and can be rebuilt from the files.</li>
+        <li>Agents need no new tool to link. One paragraph in <code>CLAUDE.md</code> / <code>AGENTS.md</code> teaches them the scheme.</li>
+        <li>Code links store path, symbol, lines and a content fingerprint, so they re-resolve when code moves.</li>
+      </ul></div>
+      <div><h3>Patterns</h3><div class="pchips"><a href="#patterns"><b>3</b>Everything has an address</a><a href="#patterns"><b>4</b>Links are just URLs</a><a href="#patterns"><b>5</b>Anchors that hold</a><a href="#patterns"><b>15</b>Backlinks everywhere</a></div></div>
+      <div class="next">Next: <a href="#s3">Pages ›</a></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ================================================================ STEP 3 -->
+<section class="view pv" id="s3" aria-labelledby="h3x">
+  <input class="sr" type="radio" name="node" id="n-router">
+  <input class="sr" type="radio" name="node" id="n-auth" checked>
+  <input class="sr" type="radio" name="node" id="n-handler">
+  <input class="sr" type="radio" name="node" id="n-worker">
+  <div class="stage">
+    <div class="win">
+      <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · Request lifecycle</span><span class="r">at://page/request-lifecycle</span></div>
+      <div class="wb">
+        <div class="side">
+          <div class="grp">Views</div>
+          <div class="it">Sessions <span>214</span></div>
+          <div class="it">Tickets <span>9</span></div>
+          <div class="it">Notes <span>12</span></div>
+          <div class="it on new">Pages <span>7</span></div>
+          <div class="grp">Pages</div>
+          <div class="it" style="font-weight:500">Request lifecycle</div>
+          <div class="it">Sync, offline to online</div>
+          <div class="it">Security model</div>
+          <div class="it">Data model</div>
+        </div>
+        <div class="main">
+          <div class="pageview">
+            <div class="pgv">
+              <div class="pg-bar"><span>Drawn by <span class="h cc">claude</span> in <a class="ref ss" href="#s3">How does a request flow?</a> asking “what’s the request lifecycle?”</span><span class="grow"></span><span>14 links</span><span style="color:var(--gold)">● 1 changed since drawn</span><span class="live">◌ 1 live</span><span class="btn q">Redraw</span></div>
+              <div class="frame">
+                <span class="fl">agent HTML · sandboxed</span>
+                <h2>Request lifecycle</h2>
+                <p class="sub">What happens between a tap in the app and a saved note. Click any box to see the code behind it.</p>
+                <div class="flow-scroll">
+                  <div class="flow">
+                    <div class="nd ext" style="grid-column:1;grid-row:1"><b>App</b><small>client</small></div>
+                    <div class="ar" style="grid-column:2;grid-row:1"></div>
+                    <label class="nd" for="n-router" style="grid-column:3;grid-row:1"><span class="lc">⌁2</span><b>Router</b><small>api/router.ts</small></label>
+                    <div class="ar" style="grid-column:4;grid-row:1"></div>
+                    <label class="nd" for="n-auth" style="grid-column:5;grid-row:1"><span class="lc">⌁5</span><span class="dr" title="changed since drawn"></span><span class="lv"></span><b>Auth &amp; limits</b><small>auth/session.ts</small></label>
+                    <div class="ar" style="grid-column:6;grid-row:1"></div>
+                    <label class="nd" for="n-handler" style="grid-column:7;grid-row:1"><span class="lc">⌁4</span><b>Notes handler</b><small>notes/handler.ts</small></label>
+                    <div class="vr" style="grid-column:7;grid-row:2"></div>
+                    <div class="nd ext" style="grid-column:7;grid-row:3"><b>Postgres</b><small>notes, versions</small></div>
+                    <div class="ar" style="grid-column:6;grid-row:3;transform:scaleX(-1)"></div>
+                    <label class="nd" for="n-worker" style="grid-column:5;grid-row:3"><span class="lc">⌁3</span><b>Search worker</b><small>jobs/index.ts</small></label>
+                    <div class="ar" style="grid-column:4;grid-row:3;transform:scaleX(-1)"></div>
+                    <div class="nd ext" style="grid-column:3;grid-row:3"><b>Search index</b><small>Meilisearch</small></div>
+                  </div>
+                </div>
+                <div class="prose">
+                  <p>Every request enters through <a class="ref code" href="#s4">router.ts#L12-40</a>, which matches the route and attaches a request ID. Auth then reads the session cookie and, since <a class="ref tk" href="#s1">CP-52</a>, checks the login limiter before any password work.</p>
+                  <p>Writes go to Postgres inside one transaction. After commit, the handler enqueues an index job instead of updating search inline. The reasoning is in <a class="ref nt" href="#s2">decision: async indexing</a>.</p>
+                </div>
+              </div>
+            </div>
+
+            <aside class="peek" aria-label="Peek">
+              <div class="pk pk-auth">
+                <div><h4>Auth &amp; limits</h4><div class="addr">at://page/request-lifecycle#auth</div></div>
+                <div class="snip"><div class="fh"><span>auth/session.ts L20–41</span><span style="color:var(--gold)">changed</span></div><pre><div class="l"><span>20</span><span><span class="kw">export async function</span> <span class="fn">verifySession</span>(req) {</span></div><div class="l"><span>21</span><span>  <span class="kw">const</span> sid = req.cookies.sid;</span></div><div class="l chg"><span>22</span><span>  <span class="kw">await</span> limits.check(req.ip, sid);</span></div><div class="l"><span>23</span><span>  <span class="kw">const</span> s = <span class="kw">await</span> sessions.get(sid);</span></div><div class="l"><span>24</span><span>  <span class="kw">if</span> (s.rotatedAt &lt; s.privAt)</span></div><div class="l"><span>25</span><span>    <span class="kw">return</span> rotate(s);</span></div></pre></div>
+                <div class="note">Line 22 was added by CP-52 after this page was drawn. The box is still right, but its description no longer mentions the limiter.</div>
+                <div class="links">
+                  <div><a class="ref tk" href="#s1">CP-52</a><small>open · adds the login limiter</small></div>
+                  <div><a class="ref ss" href="#s4">Rotate session tokens › m22</a><small>why tokens rotate on privilege change</small></div>
+                  <div><a class="ref pg" href="#s3">security-model#sessions</a><small>the same box on another page</small></div>
+                  <div><a class="ref ss" href="#s0">Rate-limit login attempts</a><small style="color:var(--blue)">live · editing limits.ts now</small></div>
+                </div>
+                <div class="acts"><span class="btn q">Open code</span><span class="btn q">Ask about this</span><a class="btn q" href="#s4">Around this ›</a></div>
+              </div>
+              <div class="pk pk-router">
+                <div><h4>Router</h4><div class="addr">at://page/request-lifecycle#router</div></div>
+                <div class="snip"><div class="fh"><span>api/router.ts L12–40</span><span>unchanged</span></div><pre><div class="l"><span>12</span><span><span class="kw">export const</span> router = <span class="fn">createRouter</span>()</span></div><div class="l"><span>13</span><span>  .use(requestId)</span></div><div class="l"><span>14</span><span>  .use(verifySession)</span></div><div class="l"><span>15</span><span>  .post(<span class="cm">"/notes"</span>, notes.save)</span></div></pre></div>
+                <div class="links"><div><a class="ref nt" href="#s2">routing conventions</a><small>note by Maren</small></div><div><a class="ref ss" href="#s0">Move to createRouter</a><small>session, Oct 12</small></div></div>
+              </div>
+              <div class="pk pk-handler">
+                <div><h4>Notes handler</h4><div class="addr">at://page/request-lifecycle#handler</div></div>
+                <div class="snip"><div class="fh"><span>notes/handler.ts L8–30</span><span>unchanged</span></div><pre><div class="l"><span>8</span><span><span class="kw">export async function</span> <span class="fn">save</span>(req) {</span></div><div class="l"><span>9</span><span>  <span class="kw">await</span> db.tx(<span class="kw">async</span> t =&gt; {</span></div><div class="l"><span>10</span><span>    <span class="kw">await</span> t.notes.upsert(req.body);</span></div><div class="l"><span>11</span><span>  });</span></div><div class="l"><span>12</span><span>  <span class="kw">await</span> jobs.enqueue(<span class="cm">"index"</span>, id);</span></div></pre></div>
+                <div class="links"><div><a class="ref nt" href="#s2">decision: async indexing</a><small>why search isn’t updated inline</small></div><div><a class="ref tk" href="#s1">CP-49</a><small>will add a Markdown export path here</small></div></div>
+              </div>
+              <div class="pk pk-worker">
+                <div><h4>Search worker</h4><div class="addr">at://page/request-lifecycle#worker</div></div>
+                <div class="links"><div><a class="ref code" href="#s4">jobs/index.ts#indexNote</a><small>the job itself</small></div><div><a class="ref ss" href="#s0">Why is search stale?</a><small>session that found the retry bug</small></div><div><a class="ref tr" href="#s4">trail: request-lifecycle › 7</a><small>step 7 of the walkthrough</small></div></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><div class="num">3</div><h2>Pages the agent draws</h2></div>
+      <p class="lede">Ask “what’s the request lifecycle?” and the agent writes a page: free HTML, whatever layout explains it best. The only rule is to link the boxes and sentences to what they describe, using the same addresses as step 2. Atelier makes those links work.</p>
+      <div><h3>How it’s built</h3><ul>
+        <li>The agent writes <code>.atelier/pages/request-lifecycle.html</code> with an ordinary file write. A meta tag records the session and the question it came from.</li>
+        <li>Pages render in a sandboxed webview with no network. Atelier injects its stylesheet, so free-form pages still look like the rest of the app.</li>
+        <li>A small injected script turns <code>at://</code> links into chips. A click opens the target beside the page, and any element with an <code>id</code> becomes addressable.</li>
+        <li>The same script marks boxes whose code changed since the page’s commit, and boxes a running session is touching.</li>
+      </ul></div>
+<pre><span class="c">&lt;!-- inside the agent's page --&gt;</span>
+&lt;div class="box" <span class="k">id</span>="auth"&gt;
+  &lt;b&gt;Auth &amp;amp; limits&lt;/b&gt;
+  &lt;a href="<span class="a">at://code/auth/session.ts#verifySession</span>"&gt;
+  &lt;a href="<span class="a">at://session/cc-7f3c#m22</span>"&gt;
+&lt;/div&gt;</pre>
+      <div><h3>Patterns</h3><div class="pchips"><a href="#patterns"><b>13</b>Pages the agent draws</a><a href="#patterns"><b>14</b>Peek</a><a href="#patterns"><b>20</b>Live overlay</a><a href="#patterns"><b>21</b>Drift marks</a></div></div>
+      <div class="next">Next: <a href="#s4">Around this ›</a></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ================================================================ STEP 4 -->
+<section class="view" id="s4" aria-labelledby="h4x">
+  <div class="stage">
+    <div class="win">
+      <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · server/auth/session.ts</span><span class="r">⌥A around this</span></div>
+      <div class="wb">
+        <div class="side">
+          <div class="grp">Views</div>
+          <div class="it">Sessions <span>214</span></div>
+          <div class="it">Tickets <span>9</span></div>
+          <div class="it">Notes <span>12</span></div>
+          <div class="it">Pages <span>7</span></div>
+          <div class="it on new">Code</div>
+          <div class="it new">Trails <span>3</span></div>
+        </div>
+        <div class="main">
+          <div class="around">
+            <div class="codev">
+              <div class="fh"><span>server/auth/session.ts</span><span class="faint">main · a1c09e</span><span style="margin-left:auto" class="faint">L20–41 selected</span></div>
+              <div class="src">
+                <div class="l"><span>18</span><span></span><span><span class="cm">// Sessions are opaque IDs; state lives in Postgres.</span></span></div>
+                <div class="l"><span>19</span><span></span><span></span></div>
+                <div class="l in"><span>20</span><span></span><span><span class="kw">export async function</span> <span class="fn">verifySession</span>(req: Req) {</span></div>
+                <div class="l in"><span>21</span><span></span><span>  <span class="kw">const</span> sid = req.cookies.sid;</span></div>
+                <div class="l in"><span>22</span><span></span><span>  <span class="kw">await</span> limits.check(req.ip, sid);</span></div>
+                <div class="l in"><span>23</span><span></span><span>  <span class="kw">const</span> s = <span class="kw">await</span> sessions.get(sid);</span></div>
+                <div class="l in"><span>24</span><span></span><span>  <span class="kw">if</span> (!s) <span class="kw">throw</span> unauthorized();</span></div>
+                <div class="l in why"><span>25</span><span></span><span>  <span class="kw">if</span> (s.rotatedAt &lt; s.privilegeChangedAt) {</span></div>
+                <div class="l in"><span>26</span><span></span><span>    <span class="kw">return</span> rotate(s, req);</span></div>
+                <div class="l in"><span>27</span><span></span><span>  }</span></div>
+                <div class="l in"><span>28</span><span></span><span>  <span class="kw">return</span> s;</span></div>
+                <div class="l in"><span>29</span><span></span><span>}</span></div>
+              </div>
+              <div class="whycard">
+                <span class="cap">Why is line 25 here?</span>
+                <span>Written by <span class="h cc">claude</span> in <a class="ref ss" href="#s2">Rotate session tokens › m22</a>, commit <a class="ref cm" href="#s4">e09b2f</a>, in answer to Tomas:</span>
+                <q>An admin who gets demoted keeps their old session. Rotate it the moment privileges change.</q>
+              </div>
+              <div class="trail">
+                <span class="cap">Trail</span><b>Request lifecycle</b>
+                <span class="dots" aria-label="Step 4 of 9"><i class="d"></i><i class="d"></i><i class="d"></i><i class="c"></i><i></i><i></i><i></i><i></i><i></i></span>
+                <span class="grow muted">4 of 9 · Auth reads the cookie and checks the limiter before any password work.</span>
+                <span class="btn q">‹ Back</span><span class="btn">Next ›</span>
+              </div>
+            </div>
+            <aside class="ar-panel">
+              <div><div class="ar-title">Around lines 20–41</div><span class="faint">Everything that links to this range, or to code it calls</span></div>
+              <div class="now"><span class="st run"></span><span>Open now in <b>Rate-limit login</b> · claude</span></div>
+              <div><h4>Pages <span>2</span></h4>
+                <div class="li"><a class="ref pg" href="#s3">request-lifecycle#auth</a><small>drawn Tue · <span style="color:var(--gold)">changed since</span></small></div>
+                <div class="li"><a class="ref pg" href="#s3">security-model#sessions</a><small>drawn Oct 28</small></div></div>
+              <div><h4>Tickets <span>2</span></h4>
+                <div class="li"><a class="ref tk" href="#s1">CP-52</a><small>open · added line 22</small></div>
+                <div class="li"><a class="ref tk" href="#s1">CP-48</a><small>closed · added lines 25–27</small></div></div>
+              <div><h4>Sessions that changed it <span>3</span></h4>
+                <div class="li"><a class="ref ss" href="#s2">Rate-limit login attempts</a><small>today · limiter call</small></div>
+                <div class="li"><a class="ref ss" href="#s2">Rotate session tokens</a><small>Tue · rotation on privilege change</small></div>
+                <div class="li"><a class="ref ss" href="#s2">Move to opaque session IDs</a><small>Sep 14 · original version</small></div></div>
+              <div><h4>Notes and questions <span>2</span></h4>
+                <div class="li"><a class="ref nt" href="#s2">decision: login cooldown</a><small>15 min, doubling to 1 h</small></div>
+                <div class="li"><a class="ref q" href="#s5">Should rotation log the user out of other devices?</a><small>open · asked by claude</small></div></div>
+              <div><h4>Trails <span>1</span></h4>
+                <div class="li"><a class="ref tr" href="#s4">request-lifecycle › 4</a><small>you are here</small></div></div>
+              <span class="btn dark" style="justify-self:start">Ask about this range</span>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><div class="num">4</div><h2>How does this fit?</h2></div>
+      <p class="lede">Once everything links, “the larger picture” becomes a query. Select any code, box, message or ticket and ask what is around it: pages that draw it, tickets that changed it, sessions that wrote it, open questions about it. Blame tells you who wrote a line; this tells you why.</p>
+      <div><h3>How it’s built</h3><ul>
+        <li><b>Around this</b> is a link-table query, widened by overlapping code ranges and by one hop through the call graph from a language server.</li>
+        <li><b>Why is this here</b> starts with git blame to find the commit. Atelier knows which session made each commit, because sessions run in their own worktrees, and the matching edit tool call leads to the message that asked for it.</li>
+        <li><b>Trails</b> are ordered lists of addresses with one sentence each, in <code>.atelier/trails/</code>. An agent can write one for any page: “walk me through it”.</li>
+      </ul></div>
+      <div><h3>Patterns</h3><div class="pchips"><a href="#patterns"><b>16</b>Around this</a><a href="#patterns"><b>17</b>Why is this here</a><a href="#patterns"><b>18</b>Trails</a><a href="#patterns"><b>9</b>Ask from anywhere</a></div></div>
+      <div class="next">Next: <a href="#s5">Since you left ›</a></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ================================================================ STEP 5 -->
+<section class="view" id="s5" aria-labelledby="h5x">
+  <div class="stage">
+    <div class="win">
+      <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · commonplace</span><span class="r">Fri 6 Nov, 08:52</span></div>
+      <div class="wb">
+        <div class="side">
+          <div class="it on new">Since you left</div>
+          <div class="grp">Views</div>
+          <div class="it">Sessions <span>214</span></div>
+          <div class="it">Tickets <span>9</span></div>
+          <div class="it">Notes <span>12</span></div>
+          <div class="it">Pages <span>9</span></div>
+          <div class="it">Code</div>
+          <div class="it">Trails <span>3</span></div>
+          <div class="grp">Pinned</div>
+          <div class="it">Atlas</div>
+          <div class="it">Request lifecycle</div>
+        </div>
+        <div class="main">
+          <div class="digest">
+            <div><h3>Since you left</h3><div class="when">Yesterday 18:40 to now · 4 sessions ran, 2 finished, 2 need you</div></div>
+
+            <div class="dsec"><h4>Waiting on you <span>2</span></h4>
+              <div class="qa"><span class="faint" style="font-size:12px"><span class="h cc">claude</span> in <a class="ref ss" href="#s2">Rate-limit login</a> · paused 21:10</span>
+                <span class="q">Should rotating a session also sign the user out on their other devices?</span>
+                <div class="ans"><span>Yes, all devices</span><span>Only this device</span><input id="a1" placeholder="Or answer in your words…" aria-label="Answer"></div></div>
+              <div class="qa"><span class="faint" style="font-size:12px"><span class="h cx">codex</span> in <a class="ref ss" href="#s0">Fix flaky merge test</a> · paused 23:02</span>
+                <span class="q">The flake is a real race in <a class="ref code" href="#s4">sync/merge.ts#applyOp</a>, not a test bug. Fix it here, or open a ticket?</span>
+                <div class="ans"><span>Fix it here</span><span>Open a ticket</span><input id="a2" placeholder="Or answer…" aria-label="Answer"></div></div>
+            </div>
+
+            <div class="dsec"><h4>Handoff notes <span>2 finished</span></h4>
+              <div class="hand"><span class="h cc">claude</span><span class="t">Export dialog: format picker</span><a class="ref tk" href="#s1">CP-47</a>
+                <p>Picker done and tested. Markdown and JSON work; PDF is stubbed behind a flag. Next: wire the PDF renderer, which needs a decision on fonts.</p></div>
+              <div class="hand"><span class="h cx">codex</span><span class="t">Research: Safari IndexedDB</span><a class="ref nt" href="#s2">note</a>
+                <p>Slowness comes from opening a transaction per write. Batching gives about 9× on the benchmark. Wrote a note with numbers; no code changed.</p></div>
+            </div>
+
+            <div class="dsec"><h4>New pages <span>kept pages stay; the rest fade after 14 days</span></h4>
+              <div class="fresh">
+                <div class="fc"><div class="th"><i style="left:12%;top:30%;width:22%;height:36%"></i><i style="left:42%;top:30%;width:22%;height:36%"></i><i style="left:72%;top:30%;width:18%;height:36%"></i></div><div class="bd"><b>Export pipeline</b><span class="faint">from CP-47 · 9 links</span><div class="acts"><span class="k">Keep</span><span>Let fade</span></div></div></div>
+                <div class="fc"><div class="th"><i style="left:10%;top:18%;width:80%;height:10%"></i><i style="left:10%;top:40%;width:60%;height:10%"></i><i style="left:10%;top:62%;width:70%;height:10%"></i></div><div class="bd"><b>IndexedDB batching benchmark</b><span class="faint">research · interactive chart</span><div class="acts"><span class="k">Keep</span><span>Let fade</span></div></div></div>
+                <div class="fc fading"><div class="th"><i style="left:30%;top:20%;width:40%;height:60%;border-radius:50%"></i></div><div class="bd"><b>Merge race, step by step</b><span class="faint">sketch · fades in 3 days</span><div class="acts"><span class="k">Keep</span><span>Let fade</span></div></div></div>
+              </div></div>
+
+            <div class="dsec"><h4>Out of date <span>1</span></h4>
+              <div class="drift-row"><a class="ref pg drift" href="#s3">request-lifecycle#auth</a><span class="grow muted">The code behind one box changed in CP-52. The rest of the page still matches.</span><span class="btn q">Show change</span><span class="btn">Redraw box</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><div class="num">5</div><h2>Trust the agents, tend the garden</h2></div>
+      <p class="lede">If agents make pages, notes and diagrams freely, the risk is clutter, not danger. So instead of gates, there is one place to look each morning. It holds questions that paused a run, short handoffs from finished sessions, new pages to keep or let fade, and pages whose code has moved.</p>
+      <div><h3>How it’s built</h3><ul>
+        <li>Handoff notes come from a session-end hook that asks the agent for three lines: what’s done, what’s next, and what it’s unsure of.</li>
+        <li>A question is an address too (<code>at://question/…</code>). The run pauses, and your answer goes back into that session as a message.</li>
+        <li>Fading only hides things from lists. The file stays in git and keeps working as a link target.</li>
+        <li>“Out of date” compares the code ranges a page links to against the commit the page was drawn at.</li>
+      </ul></div>
+      <div><h3>Patterns</h3><div class="pchips"><a href="#patterns"><b>23</b>Since you left</a><a href="#patterns"><b>12</b>Handoff note</a><a href="#patterns"><b>11</b>Open questions</a><a href="#patterns"><b>22</b>Keep or let fade</a><a href="#patterns"><b>24</b>Attributed and reversible</a></div></div>
+      <div class="next">Next: <a href="#s6">Forks ›</a></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ================================================================ STEP 6 -->
+<section class="view" id="s6" aria-labelledby="h6x">
+  <div class="stage">
+    <div class="win">
+      <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · Rate-limit login attempts · history</span><span class="r">⌘⇧F fork here</span></div>
+      <div class="wb">
+        <div class="side">
+          <div class="grp">Views</div>
+          <div class="it on">Sessions <span>214</span></div>
+          <div class="it">Tickets <span>9</span></div>
+          <div class="it">Pages <span>9</span></div>
+          <div class="it">Code</div>
+          <div class="grp">This session</div>
+          <div class="it">Transcript</div>
+          <div class="it on new">History</div>
+        </div>
+        <div class="main">
+          <div class="forkview">
+            <div class="tree">
+              <div class="tree-h"><h3 id="h6x">Rate-limit login attempts</h3><a class="ref tk" href="#s1">CP-52</a><span class="faint" style="font-size:12px;width:100%">One session, two forks. Every dot that changed files is a checkpoint you can fork from.</span></div>
+              <div class="trow"><span class="mm">m1</span><span class="ln"><b class="s done"></b><b></b><b></b></span><span class="tx2">Tomas: limit per IP and per account; nobody locked out for good</span></div>
+              <div class="trow"><span class="mm">m6</span><span class="ln"><b class="d done"></b><b></b><b></b></span><span class="tx2">Edit <code>auth/limits.ts</code> +48 <span class="ck">checkpoint</span></span></div>
+              <div class="trow"><span class="mm">m9</span><span class="ln"><b class="d done"></b><b></b><b></b></span><span class="tx2">Tests: 31 pass <span class="ck">checkpoint</span></span></div>
+              <div class="trow sel"><span class="mm">m14</span><span class="ln"><b class="f"></b><b class="hb"></b><b class="he"></b></span><span class="tx2"><b style="font-weight:500">Asked: cooldown or CAPTCHA?</b><small>forked twice from here</small></span></div>
+              <div class="trow"><span class="mm">m15</span><span class="ln"><b class="d done"></b><b class="l"></b><b class="l"></b></span><span class="tx2">Tomas: cooldown, 15 min, doubling to an hour</span></div>
+              <div class="trow"><span class="mm">a·m1</span><span class="ln"><b class="l"></b><b class="d"></b><b class="l"></b></span><span class="tx2"><span class="h cx">codex</span> Fork A: “Try a CAPTCHA after 5 failures instead”<small>handoff fork · own worktree from m14</small></span></div>
+              <div class="trow"><span class="mm">b·m1</span><span class="ln"><b class="l"></b><b class="l"></b><b class="d"></b></span><span class="tx2"><span class="h cc">claude</span> Fork B: “Same cooldown, but counters in Redis”<small>native fork · own worktree from m14</small></span></div>
+              <div class="trow"><span class="mm">m22</span><span class="ln"><b class="d done"></b><b class="l"></b><b class="l"></b></span><span class="tx2">Main line: limiter wired in, admin can clear lockouts</span></div>
+              <div class="trow"><span class="mm">a·m19</span><span class="ln"><b class="l"></b><b class="e done"></b><b class="l"></b></span><span class="tx2">Fork A ends with proposal <a class="ref pg" href="#s8">P-0413</a><small>CAPTCHA after 5 failures · 3 tests fail on mobile</small></span></div>
+              <div class="trow"><span class="mm">b·m11</span><span class="ln"><b class="l"></b><b></b><b class="e x"></b></span><span class="tx2">Fork B stopped: no Redis in the dev setup<small>left a handoff note; kept for later</small></span></div>
+              <div class="trow"><span class="mm">m31</span><span class="ln"><b class="e done"></b><b></b><b></b></span><span class="tx2">Main line ends with proposal <a class="ref pg" href="#s8">P-0412 v2</a></span></div>
+            </div>
+            <aside class="fp">
+              <div><h4>Fork from message 14</h4><span class="faint">at://session/cc-7f3c#m14</span></div>
+              <div><div class="lbl">Code at this point</div>
+                <div class="state"><code>refs/atelier/cc-7f3c/m14</code><span class="muted">The worktree as it was after message 14. 2 files differ from now.</span></div></div>
+              <div><div class="lbl">How much the fork remembers</div>
+                <div class="opt on"><i></i><span><b>Native fork</b><span class="fid">full memory</span><small>The agent resumes a copy of its own session. Claude Code supports this.</small></span></div>
+                <div class="opt"><i></i><span><b>Transcript copy</b><span class="fid">full memory</span><small>Atelier copies the transcript up to m14 under a new ID and resumes it. Works where the format is known.</small></span></div>
+                <div class="opt"><i></i><span><b>Handoff</b><span class="fid mid">summary only</span><small>Any agent starts fresh with a summary of m1–m14 and its links. Always works.</small></span></div></div>
+              <div><div class="lbl">Fan out</div>
+                <div class="fanrow"><span class="h cx">codex</span><p>Try a CAPTCHA after 5 failures instead of a cooldown.</p></div>
+                <div class="fanrow"><span class="h cc">claude</span><p>Same cooldown, but keep counters in Redis so all servers share them.</p></div>
+                <textarea id="fan3" aria-label="Another fork" placeholder="Add another direction…"></textarea></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap"><span class="btn dark">Start 2 forks</span><span class="btn q">Just one</span></div>
+              <p class="faint" style="font-size:12px">Each fork gets its own worktree at the checkpoint and its own address, and ends with its own proposal. Proposals from the same fork point are shown side by side.</p>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><div class="num">6</div><h2>Fork anywhere</h2></div>
+      <p class="lede">Forking a conversation is only useful if the code forks with it. So Atelier quietly checkpoints the worktree after every turn that changes files. Any message becomes a place to branch from, either to try a different approach or to run several at once and compare.</p>
+      <div><h3>How it’s built</h3><ul>
+        <li>After each file-changing turn (from a hook, or the file watcher), Atelier writes the worktree to a hidden ref using a temporary git index. The branch and staging area are left alone.</li>
+        <li>A fork is a new worktree at that ref, plus a session started in one of three ways. The chosen way is recorded, so you know how much the fork remembers.</li>
+        <li>Forks record their parent: <code>forked_from: at://session/cc-7f3c#m14</code>. The history view is drawn from those records.</li>
+        <li>Fan-out works the same way with a list of instructions, and the agents can differ.</li>
+      </ul></div>
+<pre><span class="c"># every file-changing turn</span>
+GIT_INDEX_FILE=$tmp git add -A
+tree=$(GIT_INDEX_FILE=$tmp git write-tree)
+git update-ref <span class="a">refs/atelier/cc-7f3c/m14</span> \
+  $(git commit-tree $tree -p $prev -m m14)</pre>
+      <div><h3>Patterns</h3><div class="pchips"><a href="#patterns"><b>25</b>Checkpoint every turn</a><a href="#patterns"><b>26</b>Three ways to fork</a><a href="#patterns"><b>27</b>Fan out, then compare</a><a href="#patterns"><b>10</b>Fork at a message</a></div></div>
+      <div class="next">Next: <a href="#s7">Subagents ›</a></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ================================================================ STEP 7 -->
+<section class="view" id="s7" aria-labelledby="h7x">
+  <div class="stage">
+    <div class="win">
+      <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · Move sessions to opaque tokens · agents</span><span class="r">5 agents · 2 running</span></div>
+      <div class="wb">
+        <div class="side">
+          <div class="grp">Views</div>
+          <div class="it on">Sessions <span>214</span></div>
+          <div class="it">Tickets <span>9</span></div>
+          <div class="it">Pages <span>9</span></div>
+          <div class="grp">This session</div>
+          <div class="it">Transcript</div>
+          <div class="it">History</div>
+          <div class="it on new">Agents <span>5</span></div>
+        </div>
+        <div class="main">
+          <div class="subview">
+            <div style="min-width:0;display:flex;flex-direction:column">
+              <div class="budget">
+                <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span><b style="color:var(--ink);font-weight:500" id="h7x">Budget for this tree</b> · set on CP-55</span><span class="mono">$3.40 of $8.00 · 22 of 45 min</span></div>
+                <div class="bar" aria-hidden="true"><i style="width:22%;background:repeating-linear-gradient(90deg,var(--gold) 0 1px,transparent 1px 3px)"></i><i style="width:6%;background:var(--ink-3)"></i><i style="width:9%;background:repeating-linear-gradient(0deg,var(--blue) 0 1px,transparent 1px 3px)"></i><i style="width:3%;background:var(--blue)"></i><i style="width:2.5%;background:var(--gold)"></i></div>
+              </div>
+              <div class="ag-node" style="--d:0"><span class="k cc"></span><span class="t">Move sessions to opaque tokens</span><span class="c">$1.30</span>
+                <span class="m"><span class="h cc">claude</span><span class="st run"></span>running · m38<span class="ws wt">wt/opaque-tokens</span><a class="ref tk" href="#s1">CP-55</a></span></div>
+              <div class="ag-node" style="--d:1"><span class="k obs"></span><span class="t">Explore: find every cookie read</span><span class="c">$0.45</span>
+                <span class="m">inside Claude Code · observed<span class="ws ro">read-only</span>done · found 14 sites</span></div>
+              <div class="ag-node sel" style="--d:1"><span class="k cx"></span><span class="t">Write migration 0015</span><span class="c">$0.70</span>
+                <span class="m"><span class="h cx">codex</span>spawned via Atelier<span class="ws wt">own worktree</span>done · <a class="ref pg" href="#s8">P-0418</a> accepted by parent</span></div>
+              <div class="ag-node" style="--d:1"><span class="k cx"></span><span class="t">Adversarial review of the auth changes</span><span class="c">$0.25</span>
+                <span class="m"><span class="h cx">codex</span>spawned via Atelier<span class="ws ro">read-only</span><span class="st run"></span>running · 2 issues so far</span></div>
+              <div class="ag-node" style="--d:1"><span class="k cc"></span><span class="t">Redraw the security-model page</span><span class="c">$0.20</span>
+                <span class="m"><span class="h cc">claude</span>spawned via Atelier<span class="ws pg">pages only</span>done · <a class="ref pg" href="#s3">security-model</a> updated</span></div>
+              <div class="ag-node" style="--d:1"><span class="k obs"></span><span class="t">Run load test against staging</span><span class="c">$0.50</span>
+                <span class="m">inside Claude Code · observed<span class="ws ro">read-only</span>done · p95 44 ms</span></div>
+              <div style="flex:1"></div>
+              <div class="legend2"><span><i></i>orchestrated by Atelier: you can pause, message or fork it</span><span><i class="obs"></i>observed inside the agent: read its transcript only</span></div>
+            </div>
+            <aside class="sd">
+              <div><h4>Write migration 0015</h4><span class="faint">at://session/cx-a21f · child of cc-31b0#m24</span></div>
+              <div><div class="cap" style="margin-bottom:4px">The parent asked for it with</div>
+<pre><span class="k">spawn</span>({
+  agent: <span class="a">"codex"</span>,
+  task: <span class="a">"Write migration 0015: copy cookie
+    sessions into the opaque-id table.
+    Must be reversible."</span>,
+  context: [
+    <span class="a">"at://code/server/auth/session.ts#verifySession"</span>,
+    <span class="a">"at://note/decision-opaque-ids"</span> ],
+  workspace: <span class="a">"worktree"</span>,  <span class="c">// or read-only, pages</span>
+  budget: { cost: 1.5, minutes: 15 },
+  returns: <span class="a">"proposal"</span>
+})</pre></div>
+              <div><div class="cap" style="margin-bottom:4px">It returned</div>
+                <div class="ret"><span><a class="ref pg" href="#s8">P-0418</a> Migration 0015, reversible</span><span class="muted" style="font-size:12px">2 parts · 9 tests · the parent read it, ran it, and accepted it into its own branch at m38. Not on main yet.</span></div></div>
+              <div><div class="cap" style="margin-bottom:4px">You can</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="btn q">Open session</span><span class="btn q">Read P-0418</span><span class="btn q">Fork it</span></div></div>
+              <p class="faint" style="font-size:12px">Policy: migrations need a person. The parent could accept P-0418 into its branch, but the final proposal to main will list it as needing your approval.</p>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><div class="num">7</div><h2>Agents that start agents</h2></div>
+      <p class="lede">There are two kinds of subagent. Some run inside the agent’s own loop, like Claude Code’s built-in subagents; Atelier can only watch those. Others an agent asks Atelier to start; those are full sessions in their own right, from any vendor, with their own workspace and budget. Both show up in one tree.</p>
+      <div><h3>How it’s built</h3><ul>
+        <li><b>Observed</b>: Atelier reads nested subagent transcripts where the agent writes them and draws them under their parent. You can’t steer them.</li>
+        <li><b>Orchestrated</b>: the Atelier MCP server offers <code>spawn</code>. Atelier starts the child like any session, records its parent, and returns its result as the tool result. The parent can wait for it or keep going.</li>
+        <li>Workspaces: <b>read-only</b> is a checkout of the parent’s current checkpoint; <b>worktree</b> branches from it and returns a proposal; <b>pages</b> may write only to <code>.atelier/pages</code>.</li>
+        <li>Each child takes a slice of its parent’s budget. If a subtree runs over, it pauses and asks you.</li>
+        <li>Children inherit the policies. Something a person must approve stays flagged however many levels up it travels.</li>
+      </ul></div>
+      <div><h3>Patterns</h3><div class="pchips"><a href="#patterns"><b>28</b>Spawn through Atelier</a><a href="#patterns"><b>29</b>Observe what you don’t run</a><a href="#patterns"><b>30</b>Budgets roll up</a><a href="#patterns"><b>32</b>Proposals flow upward</a></div></div>
+      <div class="next">Next: <a href="#s8">Proposals ›</a></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ================================================================ STEP 8 -->
+<section class="view propv" id="s8" aria-labelledby="h8x">
+  <div class="stage">
+    <div class="win">
+      <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · Proposal P-0412</span><span class="r">at://proposal/P-0412</span></div>
+      <div class="wb">
+        <div class="side">
+          <div class="it">Since you left</div>
+          <div class="grp">Views</div>
+          <div class="it">Sessions <span>214</span></div>
+          <div class="it">Tickets <span>9</span></div>
+          <div class="it on new">Proposals <span>3</span></div>
+          <div class="it">Pages <span>9</span></div>
+          <div class="grp">Ready for you</div>
+          <div class="it" style="font-weight:500">P-0412 Rate-limit</div>
+          <div class="it">P-0413 CAPTCHA</div>
+          <div class="it">P-0420 Opaque tokens</div>
+        </div>
+        <div class="main">
+          <div class="prop">
+            <div class="pbody">
+              <div class="ph">
+                <div class="row1"><span class="id">P-0412</span><h3 id="h8x">Rate-limit login attempts</h3><span class="vers" aria-label="Versions"><span>v1</span><span class="on">v2</span></span></div>
+                <div class="meta"><span style="color:var(--red)">● Ready for you</span><span>for <a class="ref tk" href="#s1">CP-52</a></span><span>from <a class="ref ss" href="#s6">Rate-limit login</a> <span class="h cc">claude</span></span><span>1 subagent · 1 sibling</span><span class="mono">31 min · $3.12</span></div>
+                <div class="meta"><span>v2 after your note “clear lockouts needs to be logged”: 2 parts changed</span></div>
+              </div>
+
+              <div class="psec">
+                <div class="doubts"><h4>What I’m unsure of</h4><ol>
+                  <li>Counters live in each server’s memory. With 3 API servers an attacker gets 3× the attempts until counters are shared. Fork B tried Redis and stopped; see <a class="ref ss" href="#s6">fork B › handoff</a>.</li>
+                  <li>The cooldown doubles up to an hour. I picked an hour from <a class="ref nt" href="#s2">decision: login cooldown</a>, but there is no data behind it.</li></ol></div>
+              </div>
+
+              <div class="psec"><h4>What changes for people <span>written by the agent</span></h4>
+                <p>After 10 failed logins for one account, or 30 from one IP, further attempts wait 15 minutes, then 30, then an hour. A correct password during cooldown still waits. Support can clear a lockout from the admin page, and every clear is logged.</p>
+                <div class="beh" aria-label="Before and after">
+                  <span>Before</span><span class="tl"><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><span class="faint" style="color:var(--ink-3)">… unlimited attempts</span></span>
+                  <span>After</span><span class="tl"><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><span>15 min</span><i class="blk"></i><i class="bad"></i><span>30 min</span><i class="blk"></i><i class="bad"></i><span>1 h</span><i class="blk"></i></span>
+                </div>
+              </div>
+
+              <div class="psec"><h4>Evidence <span>each links to the run that produced it</span></h4>
+                <div class="evid">
+                  <div class="ev"><span class="ok">✓</span><span>34 unit tests, including burst and slow-drip attacks</span><small>run at m29</small></div>
+                  <div class="ev"><span class="ok">✓</span><span>Property test: an account is never blocked longer than an hour</span><small>1,000 runs</small></div>
+                  <div class="ev"><span class="ok">✓</span><span>Load: 10,000 bad logins a minute, p95 login 41 ms → 44 ms</span><small>subagent run</small></div>
+                  <div class="try"><span>Try it</span><span class="grow">Starts this worktree’s dev server with a seeded locked-out account</span><span class="btn">Open preview</span></div>
+                </div>
+              </div>
+
+              <div class="psec"><h4>Parts <span>tick what to accept; read the red ones</span></h4>
+                <div class="parts">
+                  <label class="part"><input class="sr" type="checkbox" id="pt1" checked><span class="bx"></span><span class="rg read">read</span><span>Limiter keyed on IP and account</span><span class="f">auth/limits.ts +60</span></label>
+                  <label class="part"><input class="sr" type="checkbox" id="pt2" checked><span class="bx"></span><span class="rg read">read</span><span>Check limits before the password <span class="v2">v2</span></span><span class="f">auth/session.ts +1</span></label>
+                  <label class="part"><input class="sr" type="checkbox" id="pt3" checked><span class="bx"></span><span class="rg cov">covered</span><span>Burst and slow-drip tests</span><span class="f">limits.test.ts +120</span></label>
+                  <label class="part"><input class="sr" type="checkbox" id="pt4" checked><span class="bx"></span><span class="rg cov">covered</span><span>Admin: clear a lockout, with audit log <span class="v2">v2</span></span><span class="f">admin/users.tsx +41</span></label>
+                  <label class="part"><input class="sr" type="checkbox" id="pt5" checked><span class="bx"></span><span class="rg skim">skim</span><span>Rename attempts to failures</span><span class="f">4 files ±18</span></label>
+                  <label class="part"><input class="sr" type="checkbox" id="pt6" checked><span class="bx"></span><span class="rg nc">not code</span><span>Redraw “Auth &amp; limits” on <a class="ref pg" href="#s3">request-lifecycle</a>; tick CP-52; add decision note</span><span class="f">3 files</span></label>
+                </div>
+              </div>
+
+              <div class="psec"><h4>Alternatives <span>proposals from the same fork point</span></h4>
+                <div class="alt"><table>
+                  <thead><tr><th></th><th>P-0412 · cooldown (this)</th><th>P-0413 · CAPTCHA <span class="h cx">codex</span></th></tr></thead>
+                  <tbody>
+                    <tr><th>Real users blocked</th><td class="w">only after 10 failures</td><td>shown a CAPTCHA after 5</td></tr>
+                    <tr><th>New dependency</th><td class="w">none</td><td class="l">CAPTCHA vendor SDK</td></tr>
+                    <tr><th>Tests</th><td class="w">34 pass</td><td class="l">3 fail on mobile</td></tr>
+                    <tr><th>Size</th><td>+222 −18</td><td>+310 −22</td></tr>
+                    <tr><th>Cost</th><td>$3.12</td><td>$2.40</td></tr>
+                  </tbody></table></div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap"><span class="btn q">Open P-0413</span><span class="btn q">Combine: ask an agent to merge both</span></div>
+              </div>
+            </div>
+
+            <aside class="prail">
+              <div><h4>Decide</h4><span class="faint">Your answer goes back to the session either way.</span></div>
+              <div><div class="lbl">Accept</div><span class="btn dark acc-btn">Accept</span><span class="hint">Merges the ticked parts to main. Unticked parts return to the session as a smaller proposal.</span></div>
+              <div><div class="lbl">Revise</div><textarea id="rev" aria-label="Note to the session" placeholder="Note to the session, e.g. share counters across servers first…"></textarea>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:4px"><span class="hint">Resumes from its checkpoint; posts v3.</span><span class="btn">Send back</span></div></div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="btn q">Fork from here</span><span class="btn q">Decline…</span></div>
+              <div class="alsol"><div class="lbl">Also changes</div>
+                <span><a class="ref pg" href="#s3">request-lifecycle#auth</a></span>
+                <span><a class="ref tk" href="#s1">CP-52</a> 3 of 4 ticked</span>
+                <span><a class="ref nt" href="#s2">decision: login cooldown</a></span></div>
+              <div class="prov-mini"><div class="lbl">Made by</div>
+                <div><span class="h cc">claude</span> Rate-limit login · 31 turns</div>
+                <div style="--d:1">└ observed: load test</div>
+                <div style="--d:1">└ sibling fork A → P-0413</div>
+                <div style="--d:1">└ sibling fork B · stopped</div></div>
+              <span class="hint">Need a GitHub PR for the team? <a href="#s8">Export as PR</a>. The proposal stays the source.</span>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><div class="num">8</div><h2>Proposals instead of pull requests</h2></div>
+      <p class="lede">A pull request assumes a person wrote the code and another person reads all of it. Here an agent wrote it, and you read the parts that matter. So a session ends with a proposal. Atelier provides a fixed frame: doubts, evidence, parts, alternatives and a decision. Inside the frame, the agent writes the explanation freely, like any page.</p>
+      <div><h3>How it’s built</h3><ul>
+        <li>A proposal is a file, <code>.atelier/proposals/P-0412.md</code>, plus a ref per version. Each part is its own commit, so accepting some parts is a cherry-pick and the rest go back to the session.</li>
+        <li><b>Revise</b> sends your note into the original session as a message. It resumes from its last checkpoint, with its memory intact, and posts v2. Atelier shows what changed between versions with <code>git range-diff</code>.</li>
+        <li>Parts can change things that aren’t code: a page, a ticket, a note. You accept those the same way.</li>
+        <li>It is the same object at every level. A subagent proposes to its parent, a fork proposes back to its origin, and a session proposes to main.</li>
+        <li>Teams on GitHub can export a proposal as a PR. The reading guide and evidence go into the description.</li>
+      </ul></div>
+      <div><h3>Patterns</h3><div class="pchips"><a href="#patterns"><b>31</b>Proposal, not pull request</a><a href="#patterns"><b>32</b>Proposals flow upward</a><a href="#patterns"><b>33</b>Evidence over assertion</a><a href="#patterns"><b>34</b>Revise in place</a><a href="#patterns"><b>35</b>Accept in parts</a><a href="#patterns"><b>36</b>Doubts first</a></div></div>
+      <div class="next">Then: <a href="#patterns">the pattern language ›</a></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ================================================================ PATTERNS -->
+<section class="view" id="patterns" aria-labelledby="hp">
+  <div class="pl-intro">
+    <div>
+      <h2 id="hp">A pattern language for working with agents</h2>
+      <p>In Christopher Alexander’s sense: each pattern names a recurring problem and a solution, and connects to larger patterns it helps complete and smaller ones that complete it. Asterisks mark confidence: <b>**</b> fairly sure, <b>*</b> worth trying.</p>
+      <p>The language rests on three ideas. <b>Everything is a plain file in the repo.</b> <b>Everything has an address.</b> <b>A link is just an address written into text.</b> With those in place, people and agents use the same few moves (write a file, link to a thing, ask about a thing), and the app’s job shrinks to resolving addresses, showing backlinks, and noticing when things drift.</p>
+    </div>
+    <div class="grammar">
+      <h3>Addresses</h3>
+      <div class="gtable"><table>
+        <tr><td>at://code/path#L20-41</td><td>a line range, anchored by fingerprint</td></tr>
+        <tr><td>at://code/path#symbol</td><td>a function, class or type</td></tr>
+        <tr><td>at://session/cc-7f3c</td><td>a Claude Code or Codex session</td></tr>
+        <tr><td>at://session/cc-7f3c#m22</td><td>one message in it</td></tr>
+        <tr><td>at://ticket/CP-52</td><td>a ticket</td></tr>
+        <tr><td>at://page/name#id</td><td>a page, or one element of it</td></tr>
+        <tr><td>at://note/name</td><td>a note or decision</td></tr>
+        <tr><td>at://trail/name/4</td><td>step 4 of a trail</td></tr>
+        <tr><td>at://question/q-118</td><td>a question waiting on a person</td></tr>
+        <tr><td>at://proposal/P-0412/v2</td><td>a version of a proposal</td></tr>
+        <tr><td>at://commit/4be81a</td><td>a commit</td></tr>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="scale">
+    <div class="scale-h"><h3>Foundations</h3><p>Where things live and how they are named. Get these right and everything else is small.</p></div>
+    <div class="pats">
+      <div class="pat core"><div class="top"><span class="n">1</span><h4>Bring your own agent</h4><span class="stars">**</span></div><p class="prob">People already pay for and trust their coding agents. A new agent loop starts at zero.</p><p class="then"><b>Therefore</b> run the agents people already use as child processes, and read their transcripts from disk. Never own the model call.</p><p class="con">completes → 6 · 17</p></div>
+      <div class="pat core"><div class="top"><span class="n">2</span><h4>Plain files in the repo</h4><span class="stars">**</span></div><p class="prob">A separate database drifts from the code and is invisible to agents.</p><p class="then"><b>Therefore</b> keep tickets, notes, pages and trails as Markdown and HTML in <code>.atelier/</code>. Git does sync, history and review. Agents read them with the tools they already have.</p><p class="con">completes → 7 · 13 · 18 · 22</p></div>
+      <div class="pat core"><div class="top"><span class="n">3</span><h4>Everything has an address</h4><span class="stars">**</span></div><p class="prob">You can’t point at a message, a code range or a box in a diagram, so context gets pasted instead of linked.</p><p class="then"><b>Therefore</b> give every object, and every addressable part of one, a stable <code>at://</code> URL.</p><p class="con">completes → 4 · 5 · 15</p></div>
+      <div class="pat core"><div class="top"><span class="n">4</span><h4>Links are just URLs</h4><span class="stars">**</span></div><p class="prob">Special linking APIs mean agents link rarely and people never do.</p><p class="then"><b>Therefore</b> a link is an address written into any text: a ticket, a commit message, a code comment, a page, a chat. The app finds them all.</p><p class="con">needs ← 3 · completes → 13 · 15</p></div>
+      <div class="pat"><div class="top"><span class="n">5</span><h4>Anchors that hold</h4><span class="stars">*</span></div><p class="prob">Line numbers rot within a day.</p><p class="then"><b>Therefore</b> anchor code links by symbol, line range, content fingerprint and commit. Re-resolve them as code moves, and show drift instead of breaking.</p><p class="con">needs ← 3 · completes → 21</p></div>
+    </div>
+  </div>
+
+  <div class="scale">
+    <div class="scale-h"><h3>Working</h3><p>The day-to-day loop between people and agents.</p></div>
+    <div class="pats">
+      <div class="pat"><div class="top"><span class="n">6</span><h4>Session as workbench</h4><span class="stars">**</span></div><p class="prob">Parallel agents collide in one checkout.</p><p class="then"><b>Therefore</b> each session is an agent, a worktree and a status: running, waiting on you, or done. Show at a glance which ones need a person.</p><p class="con">needs ← 1 · completes → 7</p></div>
+      <div class="pat"><div class="top"><span class="n">7</span><h4>Ticket as a thread of sessions</h4><span class="stars">**</span></div><p class="prob">One change takes several sessions, and the story scatters.</p><p class="then"><b>Therefore</b> a ticket holds the intent; sessions attach to it as attempts. Starting from a ticket seeds the session with its text.</p><p class="con">needs ← 2 · 6</p></div>
+      <div class="pat"><div class="top"><span class="n">8</span><h4>Context tray</h4><span class="stars">*</span></div><p class="prob">Setting up an agent’s context means pasting files and explaining history.</p><p class="then"><b>Therefore</b> collect addresses in a tray as you browse. A new session gets them as links, plus resolved snippets.</p><p class="con">needs ← 3 · completes → 9</p></div>
+      <div class="pat"><div class="top"><span class="n">9</span><h4>Ask from anywhere</h4><span class="stars">**</span></div><p class="prob">Questions come up while reading, not in a chat box.</p><p class="then"><b>Therefore</b> any selection (code, a box on a page, a message) can start a session about it, with its address as context.</p><p class="con">needs ← 8 · 16</p></div>
+      <div class="pat"><div class="top"><span class="n">10</span><h4>Fork at a message</h4><span class="stars">*</span></div><p class="prob">A session goes down the wrong path at message 14.</p><p class="then"><b>Therefore</b> start a new session from any earlier message, in a fresh worktree at that point’s code, and keep both.</p><p class="con">needs ← 6 · 25 · see 26 · 27</p></div>
+      <div class="pat"><div class="top"><span class="n">11</span><h4>Open questions</h4><span class="stars">*</span></div><p class="prob">An agent’s question is buried mid-transcript and the run stalls unnoticed.</p><p class="then"><b>Therefore</b> a question is an addressable object that pauses its run and waits in one list. Answering resumes the session.</p><p class="con">completes → 23</p></div>
+      <div class="pat"><div class="top"><span class="n">12</span><h4>Handoff note</h4><span class="stars">**</span></div><p class="prob">Reopening a finished session means rereading it.</p><p class="then"><b>Therefore</b> every session ends with three lines: done, next, unsure. They show wherever the session is linked.</p><p class="con">completes → 23</p></div>
+    </div>
+  </div>
+
+  <div class="scale">
+    <div class="scale-h"><h3>Understanding</h3><p>Seeing the larger picture, and how any part fits into it.</p></div>
+    <div class="pats">
+      <div class="pat core"><div class="top"><span class="n">13</span><h4>Pages the agent draws</h4><span class="stars">**</span></div><p class="prob">Fixed diagram formats can’t explain everything; free drawings can’t be checked.</p><p class="then"><b>Therefore</b> let agents write any HTML page they like, sandboxed and styled by the app, as long as its parts link to what they describe.</p><p class="con">needs ← 2 · 4 · completes → 14 · 19 · 20 · 21</p></div>
+      <div class="pat"><div class="top"><span class="n">14</span><h4>Peek</h4><span class="stars">**</span></div><p class="prob">Following a link loses your place in the explanation.</p><p class="then"><b>Therefore</b> open the target beside the page, not instead of it. Hovering shows a one-line preview.</p><p class="con">needs ← 13</p></div>
+      <div class="pat core"><div class="top"><span class="n">15</span><h4>Backlinks everywhere</h4><span class="stars">**</span></div><p class="prob">Links only go one way, so you can’t see what refers to something.</p><p class="then"><b>Therefore</b> every object shows what links to it, gathered from all files and transcripts.</p><p class="con">needs ← 3 · 4 · completes → 16</p></div>
+      <div class="pat core"><div class="top"><span class="n">16</span><h4>Around this</h4><span class="stars">**</span></div><p class="prob">“How does this fit?” has no single place to look.</p><p class="then"><b>Therefore</b> for any selection, show its neighbourhood: pages, tickets, sessions, notes, questions and trails, widened by one hop of the call graph.</p><p class="con">needs ← 15 · completes → 9 · 17</p></div>
+      <div class="pat"><div class="top"><span class="n">17</span><h4>Why is this here</h4><span class="stars">*</span></div><p class="prob">Blame names a commit, not a reason.</p><p class="then"><b>Therefore</b> trace a line from commit to the session that made it, to the tool call that wrote it, to the message that asked for it.</p><p class="con">needs ← 1 · 6 · 16</p></div>
+      <div class="pat"><div class="top"><span class="n">18</span><h4>Trails</h4><span class="stars">*</span></div><p class="prob">A map shows everything at once; a newcomer needs an order.</p><p class="then"><b>Therefore</b> a trail is an ordered list of addresses with one sentence each, stepped through in the real code. Agents write them on request.</p><p class="con">needs ← 3 · completes → 19</p></div>
+      <div class="pat"><div class="top"><span class="n">19</span><h4>Atlas</h4><span class="stars">*</span></div><p class="prob">Many pages, no way in.</p><p class="then"><b>Therefore</b> keep one page of pages: an agent-maintained overview of the system whose boxes link to the detailed pages and trails.</p><p class="con">needs ← 13 · 18</p></div>
+      <div class="pat"><div class="top"><span class="n">20</span><h4>Live overlay</h4><span class="stars">*</span></div><p class="prob">Diagrams show structure, not what is happening.</p><p class="then"><b>Therefore</b> mark boxes whose linked code a running session is touching, or that changed recently.</p><p class="con">needs ← 13 · 6</p></div>
+    </div>
+  </div>
+
+  <div class="scale">
+    <div class="scale-h"><h3>Tending</h3><p>How to give agents room without drowning in what they make.</p></div>
+    <div class="pats">
+      <div class="pat"><div class="top"><span class="n">21</span><h4>Drift marks</h4><span class="stars">**</span></div><p class="prob">Generated docs go stale silently, and then nobody trusts them.</p><p class="then"><b>Therefore</b> mark each link whose target changed since the page was drawn, and offer to redraw just that part.</p><p class="con">needs ← 5 · 13 · completes → 23</p></div>
+      <div class="pat"><div class="top"><span class="n">22</span><h4>Keep or let fade</h4><span class="stars">*</span></div><p class="prob">Free agents produce more pages than anyone reads.</p><p class="then"><b>Therefore</b> new output is a draft. What nobody keeps or links to fades from lists after two weeks, but stays in git and stays linkable.</p><p class="con">needs ← 2 · completes → 23</p></div>
+      <div class="pat core"><div class="top"><span class="n">23</span><h4>Since you left</h4><span class="stars">**</span></div><p class="prob">With many agents running, there is no single place to resume from.</p><p class="then"><b>Therefore</b> open on one digest: questions waiting, handoff notes, new pages to keep, and what drifted.</p><p class="con">needs ← 11 · 12 · 21 · 22</p></div>
+      <div class="pat core"><div class="top"><span class="n">24</span><h4>Attributed and reversible</h4><span class="stars">**</span></div><p class="prob">Gates on everything slow good work; no gates risk bad work.</p><p class="then"><b>Therefore</b> let agents act freely where every act is attributed and can be undone with git. Keep explicit approval only for what can’t be undone: deploys, migrations, deleting data.</p><p class="con">the attitude behind 13 · 22 · 23</p></div>
+    </div>
+  </div>
+
+  <div class="scale">
+    <div class="scale-h"><h3>Branching and handing back</h3><p>Many attempts at once, agents that start agents, and one way to bring work home.</p></div>
+    <div class="pats">
+      <div class="pat core"><div class="top"><span class="n">25</span><h4>Checkpoint every turn</h4><span class="stars">**</span></div><p class="prob">Forking a conversation without its code is meaningless.</p><p class="then"><b>Therefore</b> after every turn that changes files, write the worktree to a hidden git ref, leaving the branch and staging area untouched. Every message then has a code state.</p><p class="con">needs ← 6 · completes → 10 · 26 · 34</p></div>
+      <div class="pat"><div class="top"><span class="n">26</span><h4>Three ways to fork</h4><span class="stars">*</span></div><p class="prob">External agents differ in what they can resume.</p><p class="then"><b>Therefore</b> fork natively where the agent supports it. Otherwise copy a truncated transcript where its format is known, or else start fresh from a handoff. Always record which one you got.</p><p class="con">needs ← 1 · 25</p></div>
+      <div class="pat"><div class="top"><span class="n">27</span><h4>Fan out, then compare</h4><span class="stars">**</span></div><p class="prob">An agent’s first approach is rarely questioned.</p><p class="then"><b>Therefore</b> start several forks from one point with different instructions or different agents. Their proposals arrive side by side, and one of them can be asked to combine the best of each.</p><p class="con">needs ← 25 · completes → 31</p></div>
+      <div class="pat core"><div class="top"><span class="n">28</span><h4>Spawn through Atelier</h4><span class="stars">**</span></div><p class="prob">Subagents inside one agent’s loop are invisible and tied to one vendor.</p><p class="then"><b>Therefore</b> give agents a <code>spawn</code> tool. Atelier starts the child as a full session, from any vendor, in a read-only, worktree or pages-only workspace, and returns its proposal as the tool result.</p><p class="con">needs ← 1 · 6 · completes → 30 · 32</p></div>
+      <div class="pat"><div class="top"><span class="n">29</span><h4>Observe what you don’t run</h4><span class="stars">*</span></div><p class="prob">Agents run their own subagents too.</p><p class="then"><b>Therefore</b> read those subagents from their transcripts and nest them in the same tree. Mark them as watched only: you can read them but not steer them.</p><p class="con">needs ← 1</p></div>
+      <div class="pat"><div class="top"><span class="n">30</span><h4>Budgets roll up</h4><span class="stars">*</span></div><p class="prob">A tree of agents can spend quietly.</p><p class="then"><b>Therefore</b> each child takes a slice of its parent’s time and cost. The tree shows spend at every node, and a subtree that runs over pauses and asks.</p><p class="con">needs ← 28</p></div>
+      <div class="pat core"><div class="top"><span class="n">31</span><h4>Proposal, not pull request</h4><span class="stars">**</span></div><p class="prob">A pull request is built for people reviewing people’s code, line by line.</p><p class="then"><b>Therefore</b> end work with a proposal: intent, parts (code or not), evidence, doubts, alternatives and provenance. Atelier draws the frame and the agent writes the body. It is a file plus a ref, and can be exported as a PR.</p><p class="con">needs ← 2 · 13 · completes → 33–36</p></div>
+      <div class="pat core"><div class="top"><span class="n">32</span><h4>Proposals flow upward</h4><span class="stars">**</span></div><p class="prob">Subagents, forks and sessions each hand back work differently.</p><p class="then"><b>Therefore</b> use one object at every level: child to parent, fork to origin, session to main. Accepting means merging its ref. Approvals a policy requires stay attached all the way up.</p><p class="con">needs ← 28 · 31 · 24</p></div>
+      <div class="pat"><div class="top"><span class="n">33</span><h4>Evidence over assertion</h4><span class="stars">**</span></div><p class="prob">“I tested it” is not evidence.</p><p class="then"><b>Therefore</b> proposals carry test runs, measurements and a “Try it” preview of the worktree. Each item links to the run that produced it.</p><p class="con">needs ← 31 · 3</p></div>
+      <div class="pat"><div class="top"><span class="n">34</span><h4>Revise in place</h4><span class="stars">**</span></div><p class="prob">Review comments start a new round of explaining context.</p><p class="then"><b>Therefore</b> a reviewer’s note goes back into the session that wrote the proposal. It resumes from its checkpoint with its memory, and posts v2 alongside what changed since v1.</p><p class="con">needs ← 25 · 31</p></div>
+      <div class="pat"><div class="top"><span class="n">35</span><h4>Accept in parts</h4><span class="stars">*</span></div><p class="prob">One bad part blocks a good proposal.</p><p class="then"><b>Therefore</b> make each part its own commit. Accept the parts you want; the rest return to the session as a smaller proposal.</p><p class="con">needs ← 31</p></div>
+      <div class="pat"><div class="top"><span class="n">36</span><h4>Doubts first</h4><span class="stars">**</span></div><p class="prob">Reviewers spend their attention evenly; risk isn’t spread evenly.</p><p class="then"><b>Therefore</b> every proposal opens with what its author is unsure of, linked to the code. Then a reading guide marks each part read, covered or skim.</p><p class="con">needs ← 31 · 12</p></div>
+    </div>
+  </div>
+
+  <div class="howto">
+    <div class="box">
+      <h3>Teaching an agent the language</h3>
+      <p>No plugin or fork. A paragraph in the repo’s agent instructions is enough, because every move is a file write or a URL.</p>
+<pre><span class="c"># in CLAUDE.md and AGENTS.md</span>
+When you explain something, write a page to
+.atelier/pages/&lt;name&gt;.html. Link every box and
+claim to what it describes with at:// URLs,
+e.g. <span class="a">at://code/path#symbol</span>. Give boxes ids.
+End each session with a 3-line handoff.</pre>
+    </div>
+    <div class="box">
+      <h3>The optional helper tools</h3>
+      <p>An MCP server, added to each session, makes the moves faster. The agent could do all of it with plain files, just less precisely.</p>
+<pre><span class="k">around</span>(url)      <span class="c"># neighbourhood of a thing</span>
+<span class="k">resolve</span>(url)     <span class="c"># → file, lines, snippet</span>
+<span class="k">find</span>(query)      <span class="c"># search all objects</span>
+<span class="k">ask</span>(question)    <span class="c"># pause for a person</span>
+<span class="k">handoff</span>(text)    <span class="c"># end-of-session note</span>
+<span class="k">spawn</span>(task, …)    <span class="c"># start a child session</span>
+<span class="k">propose</span>(parts)   <span class="c"># hand work back</span></pre>
+    </div>
+    <div class="box">
+      <h3>What the app actually does</h3>
+      <p>Surprisingly little, which is the point:</p>
+<pre>run CLIs in worktrees      <span class="c"># 1, 6</span>
+watch files and transcripts <span class="c"># 2</span>
+index at:// links           <span class="c"># 3, 4, 15</span>
+re-resolve code anchors     <span class="c"># 5, 21</span>
+render pages in a sandbox   <span class="c"># 13, 14, 20</span>
+checkpoint every turn       <span class="c"># 25</span>
+spawn and track children    <span class="c"># 28, 30</span>
+assemble the digest         <span class="c"># 23</span>
+merge accepted proposals    <span class="c"># 31, 35</span></pre>
+    </div>
+  </div>
+</section>
+</main>
+</div>
+
+</body></html>

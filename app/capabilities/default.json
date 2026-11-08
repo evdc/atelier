@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The UI talks to atelierd over WebSocket, not Tauri IPC, so it needs almost nothing here.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

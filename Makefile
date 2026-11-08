@@ -1,10 +1,10 @@
 # Atelier dev tasks. `make help` lists them.
-.PHONY: help dev server web app gen test check fmt
+.PHONY: help dev server web app ios-dev ios-build ios-run gen test check fmt
 
 HOME_DEV ?= $(HOME)/.atelier-dev
 
 help:            ## List tasks
-	@grep -E '^[a-z]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*## /\t/'
+	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*## /\t/'
 
 dev:             ## Run server (dev home) + web UI in a browser at http://localhost:5173
 	cargo build -p atelier-server
@@ -17,6 +17,21 @@ server:          ## Run only the server (dev home)
 app:             ## Run the desktop app (starts its own server in ~/.atelier if none is running)
 	cargo build -p atelier-server
 	cd app && cargo tauri dev
+
+IOS_SIM ?= iPhone 17 Pro
+IOS_APP := app/gen/apple/build/arm64-sim/Atelier.app
+
+ios-dev:         ## Run the iOS app in a simulator ($(IOS_SIM)) against the Vite dev server
+	cd app && cargo tauri ios dev "$(IOS_SIM)"
+
+ios-build:       ## Build the iOS app for the simulator (unsigned debug; signing is configured in Xcode)
+	cd app && cargo tauri ios build --debug --target aarch64-sim --ci
+
+ios-run: ios-build ## Build, install and launch the iOS app in the simulator ($(IOS_SIM))
+	xcrun simctl boot "$(IOS_SIM)" 2>/dev/null || true
+	open -a Simulator
+	xcrun simctl install "$(IOS_SIM)" $(IOS_APP)
+	xcrun simctl launch "$(IOS_SIM)" sh.atelier.app
 
 gen:             ## Regenerate TypeScript bindings from the Rust protocol types
 	rm -rf web/src/gen && cargo test -q -p atelier-core -p atelier-proto export_bindings >/dev/null

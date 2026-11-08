@@ -1,5 +1,5 @@
 /target
 node_modules/
 /web/dist
-/app/gen
+/app/gen/schemas
 .DS_Store

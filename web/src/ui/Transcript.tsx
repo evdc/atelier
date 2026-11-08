@@ -1,9 +1,10 @@
-import { createEffect, For, Match, on, Show, Switch, type Accessor } from "solid-js";
+import { createEffect, createSignal, For, Match, on, Show, Switch, type Accessor } from "solid-js";
 import type { SessionRow } from "../gen/SessionRow";
 import type { Item } from "../agents/model";
 import type { LiveTranscript } from "../agents/transcript";
 import { usd } from "../lib/time";
-import { summarize } from "../agents/tools";
+import { summarize, toolStat } from "../agents/tools";
+import { ToolBody } from "./tools/ToolBody";
 import { Ask } from "./Ask";
 import { Markdown } from "./Markdown";
 
@@ -84,18 +85,23 @@ type ToolItem = Extract<Item, { k: "tool" }>;
 
 function ToolView(props: { tool: ToolItem; cwd: string }) {
   const tool = () => props.tool;
+  const [open, setOpen] = createSignal(false);
   return (
-    <details class="tool" classList={{ err: !!tool().result?.error, "open-ish": !tool().result, sub: !!tool().sub }}>
+    <details
+      class="tool"
+      classList={{ err: !!tool().result?.error, "open-ish": !tool().result, sub: !!tool().sub }}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+    >
       <summary>
         <b>{tool().name}</b>
         <span class="arg">{summarize(tool().name, tool().input, props.cwd)}</span>
+        <Show when={toolStat(tool().name, tool().input, tool().result)}>{(s) => <span class="stat">{s()}</span>}</Show>
       </summary>
-      <pre>{clip(JSON.stringify(tool().input, null, 2))}</pre>
-      <Show when={tool().result}>{(r) => <pre>{clip(r().text) || "(no output)"}</pre>}</Show>
+      <Show when={open()}>
+        <ToolBody tool={tool()} />
+      </Show>
     </details>
   );
 }
 
-const LIMIT = 6000;
-const clip = (s: string) => (s.length > LIMIT ? `${s.slice(0, LIMIT)}\n… ${s.length - LIMIT} more characters` : s);
 const seconds = (ms: number | null) => (ms == null ? "" : ms < 1000 ? `${ms}ms` : `${Math.round(ms / 1000)}s`);

@@ -31,10 +31,14 @@ export type Item =
 
 export interface Transcript {
   items: Item[];
+  /** The model the agent reported at its latest init. */
+  model: string | null;
+  /** Tokens the latest request sent as context (input + cache), for the header. */
+  context: number | null;
   /** Index of tool items by tool_use id, for attaching results. */
   tools: Record<string, number>;
   /** Index of permission items by request id. */
   perms: Record<string, number>;
 }
 
-export const emptyTranscript = (): Transcript => ({ items: [], tools: {}, perms: {} });
+export const emptyTranscript = (): Transcript => ({ items: [], model: null, context: null, tools: {}, perms: {} });

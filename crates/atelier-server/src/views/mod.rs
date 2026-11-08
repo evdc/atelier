@@ -9,6 +9,7 @@
 
 pub mod projects;
 pub mod sessions;
+pub mod usage;
 
 use anyhow::Result;
 use atelier_proto::ViewName;
@@ -18,7 +19,7 @@ use serde_json::Value;
 
 pub fn projections() -> Vec<Box<dyn Projection>> {
     // Order matters only for cross-table reads inside `apply`; none yet.
-    vec![Box::new(projects::Projects), Box::new(sessions::Sessions)]
+    vec![Box::new(projects::Projects), Box::new(sessions::Sessions), Box::new(usage::Usage)]
 }
 
 /// All rows of a view (narrowed to `scope`, if given), in display order.
@@ -26,6 +27,7 @@ pub fn snapshot(c: &Connection, view: ViewName, scope: Option<&str>) -> Result<V
     Ok(match view {
         ViewName::Projects => to_values(projects::list(c)?),
         ViewName::Sessions => to_values(sessions::list(c, scope)?),
+        ViewName::Usage => to_values(usage::list(c)?),
     })
 }
 
@@ -34,6 +36,7 @@ pub fn row(c: &Connection, view: ViewName, key: &str) -> Result<Option<Value>> {
     Ok(match view {
         ViewName::Projects => projects::get(c, key)?.map(to_value),
         ViewName::Sessions => sessions::get(c, key)?.map(to_value),
+        ViewName::Usage => usage::list(c)?.into_iter().find(|r| r.id == key).map(to_value),
     })
 }
 
@@ -50,6 +53,18 @@ fn to_values<T: serde::Serialize>(ts: Vec<T>) -> Vec<Value> {
 pub(crate) fn parse<B: atelier_core::EventBody>(ev: &atelier_core::Event) -> Option<B> {
     match ev.parse::<B>()? {
         Ok(b) => Some(b),
+        Err(e) => {
+            tracing::warn!("skipping malformed {} @{}: {e}", ev.kind, ev.seq);
+            None
+        }
+    }
+}
+
+/// Like [`parse`], for vendor bodies that have no `EventBody` type: the
+/// projection reads only the fields it needs and ignores the rest.
+pub(crate) fn parse_raw<T: serde::de::DeserializeOwned>(ev: &atelier_core::Event) -> Option<T> {
+    match serde_json::from_str(ev.body.get()) {
+        Ok(v) => Some(v),
         Err(e) => {
             tracing::warn!("skipping malformed {} @{}: {e}", ev.kind, ev.seq);
             None

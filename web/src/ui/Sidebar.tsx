@@ -3,17 +3,12 @@ import { href, route } from "../lib/router";
 import { useApp } from "./context";
 
 export function Sidebar() {
-  const { conn, projects } = useApp();
+  const { projects } = useApp();
   const current = () => {
     const r = route();
     return r.name === "sessions" ? r.project : null;
   };
   const project = () => (current() ? projects.get(current()!) : undefined);
-
-  const connLabel = () =>
-    ({ open: "Connected", connecting: "Connecting…", offline: "Reconnecting…", rejected: conn.error() ?? "Rejected" })[
-      conn.state()
-    ];
 
   return (
     <aside class="side">
@@ -52,10 +47,6 @@ export function Sidebar() {
           )}
         </Show>
       </nav>
-      <footer title={connLabel()}>
-        <i class={`conn-dot ${conn.state()}`} />
-        <span>{connLabel()}</span>
-      </footer>
     </aside>
   );
 }

@@ -53,6 +53,27 @@ describe("fold", () => {
     expect(t.items).toEqual([]);
   });
 
+  it("takes the model from the latest init and the context from the latest request", () => {
+    const t = emptyTranscript();
+    const usage = (input: number, cache: number) => ({ input_tokens: input, cache_creation_input_tokens: 0, cache_read_input_tokens: cache, output_tokens: 900 });
+    fold(t, ev("cc.system", { type: "system", subtype: "init", model: "claude-sonnet-5-5" }));
+    fold(t, ev("cc.system", { type: "system", subtype: "hook_started" }));
+    expect(t.model).toBe("claude-sonnet-5-5");
+    expect(t.context).toBeNull();
+
+    fold(t, ev("cc.assistant", { type: "assistant", message: { id: "m1", content: [{ type: "text", text: "a" }], usage: usage(2, 134778) } }));
+    expect(t.context).toBe(134780);
+    // A subagent's request doesn't stand in for the session's context.
+    fold(t, ev("cc.assistant", { type: "assistant", parent_tool_use_id: "tu9", message: { id: "m2", content: [{ type: "text", text: "b" }], usage: usage(2, 5000) } }));
+    expect(t.context).toBe(134780);
+    // The turn total is a sum over all requests: not a context size.
+    fold(t, ev("turn.ended", { is_error: false, raw: { usage: usage(3, 3448408) } }));
+    expect(t.context).toBe(134780);
+
+    fold(t, ev("cc.system", { type: "system", subtype: "init", model: "claude-opus-5-5" }));
+    expect(t.model).toBe("claude-opus-5-5");
+  });
+
   it("extracts streamed text", () => {
     expect(streamDelta("cc.stream_event", { type: "content_block_delta", delta: { type: "text_delta", text: "hi" } })).toEqual({ text: "hi" });
     expect(streamDelta("cc.stream_event", { type: "content_block_start" })).toEqual({ reset: true });

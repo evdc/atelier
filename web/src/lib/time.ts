@@ -19,3 +19,21 @@ export function ago(ts: number): string {
 export function usd(n: number): string {
   return n < 0.01 && n > 0 ? "<$0.01" : `$${n.toFixed(2)}`;
 }
+
+/** "96k tokens", "1.2M tokens", "740 tokens". */
+export function tokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tokens`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k tokens`;
+  return `${n} tokens`;
+}
+
+/** When a limit window resets: "3:40 PM" today, "Tue 3:40 PM" otherwise. */
+export function resetsAt(ms: number): string {
+  const d = new Date(ms);
+  const today = d.toDateString() === new Date().toDateString();
+  return d.toLocaleString(undefined, {
+    weekday: today ? undefined : "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}

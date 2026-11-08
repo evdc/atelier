@@ -1,17 +1,20 @@
 import { Match, Show, Switch } from "solid-js";
 import type { ProjectRow } from "../gen/ProjectRow";
 import type { SessionRow } from "../gen/SessionRow";
+import type { UsageRow } from "../gen/UsageRow";
 import type { Conn } from "../lib/conn";
 import { route } from "../lib/router";
 import { byRecent, createView } from "../lib/view";
 import { Ctx } from "./context";
 import { ProjectsView } from "./ProjectsView";
 import { SessionsView } from "./SessionsView";
+import { Footer } from "./Footer";
 import { Sidebar } from "./Sidebar";
 
 export function App(props: { conn: Conn }) {
   const projects = createView<ProjectRow>(props.conn, "projects", null, byRecent);
   const sessions = createView<SessionRow>(props.conn, "sessions", null, byRecent);
+  const usage = createView<UsageRow>(props.conn, "usage", null, () => 0);
 
   const projectRoute = () => {
     const r = route();
@@ -19,7 +22,7 @@ export function App(props: { conn: Conn }) {
   };
 
   return (
-    <Ctx.Provider value={{ conn: props.conn, projects, sessions }}>
+    <Ctx.Provider value={{ conn: props.conn, projects, sessions, usage }}>
       <div class="app">
         <Sidebar />
         <main class="main">
@@ -37,6 +40,7 @@ export function App(props: { conn: Conn }) {
             </Match>
           </Switch>
         </main>
+        <Footer />
       </div>
     </Ctx.Provider>
   );

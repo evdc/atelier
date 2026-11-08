@@ -2,7 +2,7 @@ import { createSignal, Show, type Accessor } from "solid-js";
 import type { SessionRow } from "../gen/SessionRow";
 import { createTranscript } from "../agents/transcript";
 import { go } from "../lib/router";
-import { usd } from "../lib/time";
+import { tokens, usd } from "../lib/time";
 import { Composer } from "./Composer";
 import { useApp } from "./context";
 import { TranscriptView } from "./Transcript";
@@ -50,12 +50,11 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
             </span>
           </Show>
           <span>{s().turns === 1 ? "1 turn" : `${s().turns} turns`}</span>
+          <Show when={live.t.context}>{(n) => <span>{tokens(n())}</span>}</Show>
           <Show when={s().cost_usd > 0}>
             <span>{usd(s().cost_usd)}</span>
           </Show>
-          <Show when={s().model}>
-            <span>{s().model}</span>
-          </Show>
+          <Show when={live.t.model ?? s().model}>{(m) => <span>{m()}</span>}</Show>
         </div>
       </header>
 

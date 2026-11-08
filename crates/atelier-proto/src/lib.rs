@@ -184,6 +184,8 @@ pub enum ViewName {
     Projects,
     /// Rows: [`SessionRow`]. Scope: project id.
     Sessions,
+    /// Rows: [`UsageRow`], at most one. Unscoped.
+    Usage,
 }
 
 impl ViewName {
@@ -191,6 +193,7 @@ impl ViewName {
         match self {
             ViewName::Projects => "projects",
             ViewName::Sessions => "sessions",
+            ViewName::Usage => "usage",
         }
     }
 }
@@ -270,4 +273,26 @@ pub struct SessionRow {
     #[ts(type = "number")]
     pub updated_at: i64,
     pub archived: bool,
+}
+
+/// Subscription usage, from the latest `cc.rate_limit_event` per window across
+/// all sessions. The row is absent until a window has been reported.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UsageRow {
+    /// Always `global`: the view has a single row.
+    pub id: String,
+    pub five_hour: Option<LimitWindow>,
+    pub seven_day: Option<LimitWindow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LimitWindow {
+    /// Fraction of the window's allowance used, when the vendor reports it.
+    #[ts(type = "number | null")]
+    pub utilization: Option<f64>,
+    /// Unix milliseconds when the window resets, when reported.
+    #[ts(type = "number | null")]
+    pub resets_at: Option<i64>,
 }

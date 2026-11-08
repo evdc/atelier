@@ -2,6 +2,7 @@
 .app {
   display: grid;
   grid-template-columns: var(--side-w) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
   padding-top: env(safe-area-inset-top, 0px);
 }
@@ -85,14 +86,54 @@
 .side .it.on .needs {
   color: var(--paper);
 }
-.side footer {
+/* The footer spans the whole app: subscription limits and connection state. */
+.foot {
+  grid-column: 1 / -1;
   border-top: 1px solid var(--line);
-  padding: 8px 14px calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: 7px 14px calc(7px + env(safe-area-inset-bottom, 0px));
   font-size: 12px;
   color: var(--ink-3);
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--paper);
+}
+.foot .conn {
+  display: flex;
+  align-items: center;
   gap: 7px;
+  white-space: nowrap;
+}
+/* Subscription limits: two hairline meters. Gold is the agent's (things to
+   notice); red past 80% means it needs you. */
+.foot .limits {
+  display: flex;
+  gap: 22px;
+}
+.foot .limit {
+  display: grid;
+  grid-template-columns: 18px 120px 36px;
+  align-items: center;
+  gap: 8px;
+  font: 10.5px var(--f-mono);
+}
+.foot .limit .pct {
+  text-align: right;
+  color: var(--ink-2);
+}
+.foot .limit .bar {
+  height: 3px;
+  background: var(--line);
+  position: relative;
+}
+.foot .limit .bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--gold);
+}
+.foot .limit .bar.near i {
+  background: var(--red);
 }
 .conn-dot {
   width: 6px;
@@ -743,7 +784,7 @@
 @media (max-width: 760px) {
   .app {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
   }
   .side {
     border-right: 0;
@@ -763,13 +804,23 @@
     overflow-x: auto;
     padding: 6px 8px;
   }
-  .side .grp,
-  .side footer span {
+  .side .grp {
     display: none;
   }
-  .side footer {
-    border-top: 0;
-    padding: 0 12px;
+  .foot {
+    padding: 6px 12px calc(6px + env(safe-area-inset-bottom, 0px));
+    gap: 12px;
+  }
+  .foot .limits {
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+  }
+  .foot .limit {
+    grid-template-columns: 16px minmax(0, 1fr) 34px;
+  }
+  .foot .conn span {
+    display: none;
   }
   .split {
     grid-template-columns: minmax(0, 1fr);

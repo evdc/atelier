@@ -21,7 +21,9 @@ interface Block {
 
 interface CcMessage {
   type: string;
-  message?: { id?: string; content?: Block[] | string };
+  subtype?: string;
+  model?: string;
+  message?: { id?: string; content?: Block[] | string; usage?: unknown };
   parent_tool_use_id?: string | null;
 }
 
@@ -33,6 +35,8 @@ export const claude: Adapter = {
     const blocks = Array.isArray(m.message?.content) ? m.message.content : [];
 
     if (ev.kind === "cc.assistant") {
+      // A message's usage is that one request's; a subagent's requests have their own window.
+      if (!sub) t.context = contextTokens(m.message?.usage) ?? t.context;
       blocks.forEach((b, i) => {
         const id = `e${ev.seq}.${i}`;
         if (b.type === "text" && b.text) {
@@ -50,8 +54,10 @@ export const claude: Adapter = {
         const item = t.items[t.tools[b.tool_use_id] ?? -1];
         if (item?.k === "tool") item.result = { text: resultText(b.content), error: !!b.is_error };
       }
+    } else if (ev.kind === "cc.system" && m.subtype === "init") {
+      if (m.model) t.model = m.model;
     }
-    // cc.system (init, hooks), cc.rate_limit_event…: not part of the transcript.
+    // Other cc.system (hooks…) and cc.rate_limit_event: not part of the transcript.
   },
   stream(kind, body): StreamDelta {
     if (kind !== "cc.stream_event") return {};
@@ -61,6 +67,22 @@ export const claude: Adapter = {
     return {};
   },
 };
+
+/**
+ * Context one API request sent: input plus both cache counts, from that request's
+ * `usage`. Output tokens are excluded: they don't occupy the window yet.
+ * Not the `result` message's usage: that sums cache reads over every request in
+ * the turn, so a long tool-using turn reads as millions of tokens.
+ */
+export function contextTokens(usage: unknown): number | null {
+  const u = usage as Record<string, unknown> | null | undefined;
+  if (!u || typeof u.input_tokens !== "number") return null;
+  const cache = ["cache_creation_input_tokens", "cache_read_input_tokens"].reduce(
+    (sum, k) => sum + (typeof u[k] === "number" ? (u[k] as number) : 0),
+    0,
+  );
+  return u.input_tokens + cache;
+}
 
 function resultText(c: Block["content"]): string {
   if (typeof c === "string") return c;

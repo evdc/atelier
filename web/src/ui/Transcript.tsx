@@ -5,6 +5,7 @@ import type { LiveTranscript } from "../agents/transcript";
 import { usd } from "../lib/time";
 import { summarize } from "../agents/tools";
 import { Ask } from "./Ask";
+import { Markdown } from "./Markdown";
 
 export function TranscriptView(props: { live: LiveTranscript; session: Accessor<SessionRow> }) {
   const { t, streaming, ready } = props.live;
@@ -51,7 +52,7 @@ function ItemView(props: { item: Item; prev: Item | undefined; session: Accessor
         {(m) => (
           <div class="msg" classList={{ sub: !!m().sub, cont: props.prev?.k === "text" }}>
             <span class="who agent" />
-            <div class="body">{m().text}</div>
+            <Markdown text={m().text} />
           </div>
         )}
       </Match>

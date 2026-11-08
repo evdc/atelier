@@ -386,6 +386,8 @@
 .tx {
   padding: 18px 18px 8px;
   display: grid;
+  /* minmax(0, …): an implicit `auto` column grows to the widest child and overflows the pane. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-content: start;
   max-width: calc(var(--measure) + 40px);
@@ -415,8 +417,112 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.msg .body.md {
+  white-space: normal;
+}
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md p,
+.md ul,
+.md ol,
+.md pre,
+.md table,
+.md blockquote {
+  margin: 0 0 0.7em;
+}
+.md ul,
+.md ol {
+  padding-left: 1.4em;
+}
+.md li + li {
+  margin-top: 0.15em;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  font: 400 18px/1.3 var(--f-display);
+  margin: 1em 0 0.35em;
+}
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 16px;
+}
+.md a {
+  color: var(--blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md code {
+  font: 12.5px var(--f-mono);
+  background: var(--wash);
+  padding: 0.05em 0.3em;
+  border-radius: 2px;
+}
+.md pre {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 9px 11px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.md pre code {
+  background: none;
+  padding: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.md blockquote {
+  margin-left: 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--hair);
+  color: var(--ink-2);
+}
+.md table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  font-size: 13.5px;
+  /* `anywhere` (inherited from .body) lets columns shrink to one character; keep words whole and scroll instead. */
+  overflow-wrap: normal;
+}
+.md th,
+.md td {
+  min-width: 6ch;
+  border: 1px solid var(--line);
+  padding: 3px 9px;
+  text-align: left;
+}
+.md th {
+  font-weight: 600;
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1em 0;
+}
+.msg.user {
+  grid-template-columns: minmax(0, auto);
+  justify-self: end;
+  max-width: 85%;
+}
+.msg.user .who {
+  display: none;
+}
 .msg.user .body {
   font-style: italic;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  padding: 6px 11px;
 }
 .msg.cont .who {
   visibility: hidden;

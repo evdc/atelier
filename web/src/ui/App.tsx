@@ -1,20 +1,24 @@
-import { Match, Show, Switch } from "solid-js";
+import { Match, onCleanup, Show, Switch } from "solid-js";
 import type { ProjectRow } from "../gen/ProjectRow";
 import type { SessionRow } from "../gen/SessionRow";
 import type { UsageRow } from "../gen/UsageRow";
 import type { Conn } from "../lib/conn";
 import { route } from "../lib/router";
 import { byRecent, createView } from "../lib/view";
+import { trackViewport } from "../lib/viewport";
 import { Ctx } from "./context";
+import { AllSessionsView, WaitingView } from "./Inbox";
 import { ProjectsView } from "./ProjectsView";
 import { SessionsView } from "./SessionsView";
 import { Footer } from "./Footer";
 import { Sidebar } from "./Sidebar";
+import { Tabs } from "./Tabs";
 
 export function App(props: { conn: Conn }) {
   const projects = createView<ProjectRow>(props.conn, "projects", null, byRecent);
   const sessions = createView<SessionRow>(props.conn, "sessions", null, byRecent);
   const usage = createView<UsageRow>(props.conn, "usage", null, () => 0);
+  onCleanup(trackViewport());
 
   const projectRoute = () => {
     const r = route();
@@ -35,12 +39,19 @@ export function App(props: { conn: Conn }) {
                 </Show>
               )}
             </Match>
+            <Match when={route().name === "waiting"}>
+              <WaitingView />
+            </Match>
+            <Match when={route().name === "all"}>
+              <AllSessionsView />
+            </Match>
             <Match when={true}>
               <ProjectsView />
             </Match>
           </Switch>
         </main>
         <Footer />
+        <Tabs />
       </div>
     </Ctx.Provider>
   );

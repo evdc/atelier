@@ -38,7 +38,8 @@ export function ProjectsView() {
         </header>
 
         <Show when={waiting().length}>
-          <section class="sec">
+          {/* the phone has its own Waiting tab */}
+          <section class="sec waiting-sec">
             <h2>
               Waiting on you <span>{waiting().length}</span>
             </h2>

@@ -154,7 +154,8 @@ and tested; adding Codex = adding `agents/codex.ts`.
 Back-pressure: bounded outbox per connection; if a client can't keep up it is disconnected and resumes from its seq.
 
 **Auth:** a token in `<home>/token` (0600), created by whichever of server/app starts first; sent in `hello`.
-Server binds loopback by default. Remote access + pairing: AT-012.
+Server binds loopback by default. With `ATELIER_LISTEN_TAILSCALE=1` it also listens on the tailnet address, where
+a peer owned by the same Tailscale user (`tailscale whois`) needs no token (AT-012). Loopback always needs it.
 
 ## 8. Frontend
 

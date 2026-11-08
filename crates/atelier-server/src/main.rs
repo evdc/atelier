@@ -1,4 +1,8 @@
+use std::net::SocketAddr;
+use std::time::Duration;
+
 use anyhow::{Context, Result};
+use atelier_server::tailnet::Tailscale;
 use atelier_server::{App, Config};
 use tracing_subscriber::EnvFilter;
 
@@ -18,6 +22,10 @@ async fn main() -> Result<()> {
         .with_context(|| format!("binding {listen} (is another atelierd running?)"))?;
     tracing::info!("listening on {listen}");
 
+    if app.config.listen_tailscale {
+        tokio::spawn(serve_tailnet(app.clone(), listen.port()));
+    }
+
     let supervisor = app.supervisor.clone();
     let stopping = app.stopping.clone();
     axum::serve(listener, app.router())
@@ -29,6 +37,39 @@ async fn main() -> Result<()> {
         .await?;
     supervisor.shutdown().await;
     Ok(())
+}
+
+/// Listen on the tailnet address too. Tailscale may not be up yet (e.g. at
+/// login, under launchd), so keep trying rather than give up on remote access.
+async fn serve_tailnet(app: App, port: u16) {
+    let ts = Tailscale::new(app.config.tailscale_bin.clone());
+    let mut stopping = app.stopping.subscribe();
+    let listener = loop {
+        let bound = match ts.ipv4().await {
+            Ok(ip) => tokio::net::TcpListener::bind((ip, port)).await.with_context(|| format!("binding {ip}:{port}")),
+            Err(e) => Err(e),
+        };
+        match bound {
+            Ok(l) => break l,
+            Err(e) => tracing::warn!("tailnet listener unavailable, retrying in 30s: {e:#}"),
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(30)) => {}
+            _ = stopping.wait_for(|s| *s) => return,
+        }
+    };
+    if let Ok(addr) = listener.local_addr() {
+        tracing::info!("listening on {addr} (tailnet)");
+    }
+    let service = app.tailnet_router().into_make_service_with_connect_info::<SocketAddr>();
+    let result = axum::serve(listener, service)
+        .with_graceful_shutdown(async move {
+            let _ = stopping.wait_for(|s| *s).await;
+        })
+        .await;
+    if let Err(e) = result {
+        tracing::error!("tailnet listener failed: {e:#}");
+    }
 }
 
 /// Ctrl-C, or SIGTERM (launchd, systemd, `kill`).

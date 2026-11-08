@@ -11,7 +11,7 @@ import "./styles/app.css";
 import { render } from "solid-js/web";
 import { Conn, serverConfig } from "./lib/conn";
 import { App } from "./ui/App";
-import { Unconfigured } from "./ui/Unconfigured";
+import { Unconfigured } from "./ui/Settings";
 
 const root = document.getElementById("root")!;
 const cfg = serverConfig();

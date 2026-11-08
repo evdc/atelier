@@ -6,6 +6,7 @@
 //! per-client queues growing in the server.
 
 use std::collections::{BTreeSet, HashMap};
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -43,7 +44,9 @@ impl Outbox {
     }
 }
 
-pub async fn connection(app: App, socket: WebSocket) {
+/// `peer` is set for connections on the tailnet listener whose peer may be
+/// trusted without a token (see [`crate::tailnet`]).
+pub async fn connection(app: App, socket: WebSocket, peer: Option<IpAddr>) {
     let (mut sink, mut incoming) = socket.split();
     let (tx, mut rx) = mpsc::channel::<Utf8Bytes>(OUTBOX);
     let out = Outbox { tx, overflow: Arc::new(Notify::new()) };
@@ -67,8 +70,19 @@ pub async fn connection(app: App, socket: WebSocket) {
                     });
                     return finish(out, writer).await;
                 }
-                if !app.config.token_ok(token.as_deref()) {
-                    out.send(&ServerMsg::Fatal { error: "unauthorized".into() });
+                let ok = app.config.token_ok(token.as_deref())
+                    || match peer {
+                        Some(ip) => app.peers.trusted(ip).await,
+                        None => false,
+                    };
+                if !ok {
+                    let error = match (peer, token) {
+                        (Some(_), None) => {
+                            "unauthorized: this device isn't signed in to the server's Tailscale account; a token is needed"
+                        }
+                        _ => "unauthorized",
+                    };
+                    out.send(&ServerMsg::Fatal { error: error.into() });
                     return finish(out, writer).await;
                 }
                 tracing::info!("client connected: {client}");

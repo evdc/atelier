@@ -1,3 +1,5 @@
 [env]
+# `force`: an inherited TS_RS_EXPORT_DIR (e.g. from a session started in the main checkout) must not
+# redirect a worktree's bindings into another checkout.
 # ts-rs writes TypeScript bindings here when `cargo test` runs (see `make gen`).
-TS_RS_EXPORT_DIR = { value = "web/src/gen", relative = true }
+TS_RS_EXPORT_DIR = { value = "web/src/gen", relative = true, force = true }

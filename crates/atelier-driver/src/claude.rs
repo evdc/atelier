@@ -84,6 +84,9 @@ impl ClaudeCode {
         if let Some(model) = &spec.model {
             cmd.args(["--model", model]);
         }
+        // Agents run in their own worktree; build-tool env inherited from wherever atelierd was started
+        // would point their cargo runs back at another checkout.
+        cmd.env_remove("TS_RS_EXPORT_DIR");
         cmd.args(&self.extra_args)
             .current_dir(&spec.cwd)
             .stdin(Stdio::piped())

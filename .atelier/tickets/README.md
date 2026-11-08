@@ -19,7 +19,7 @@ Written to be picked up cold by an agent: read the ticket, then the files it nam
 | AT-009 | Keyboard: palette, shortcuts, focus | M1 | M | |
 | AT-010 | Worktree lifecycle: changes, cleanup, open-in | M1 | M | |
 | AT-011 | Run atelierd as a login agent; bundle it | M2 | M | |
-| AT-012 | Remote access over Tailscale + pairing | M2 | M | AT-011 |
+| AT-012 | Remote access over Tailscale (address in Settings) | M2 | M | AT-011 |
 | AT-013 | iOS client | M2 | L | AT-012 |
 | AT-014 | Notify when a session needs you | M2 | S | |
 | AT-015 | Instant cold start (client event cache) | M2 | M | |
@@ -28,3 +28,6 @@ Written to be picked up cold by an agent: read the ticket, then the files it nam
 | AT-018 | Add-project: browse the server's directories | M1 | S | |
 | AT-019 | CI | — | S | |
 | AT-020 | Store benchmarks and the prefix-scan index | — | S | |
+| AT-021 | iOS shell (Tauri iOS target) | M2 | M | |
+| AT-022 | Phone layout pass + "Waiting on you" home | M2 | M | |
+| AT-023 | iOS on a real device: reconnect, data budget, TestFlight | M2 | S | AT-012, AT-021, AT-022 |

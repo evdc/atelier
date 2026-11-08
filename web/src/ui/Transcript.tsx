@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Match, on, Show, Switch, type Accessor } from "solid-js";
+import { createEffect, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, type Accessor } from "solid-js";
 import type { SessionRow } from "../gen/SessionRow";
 import type { Item } from "../agents/model";
 import type { LiveTranscript } from "../agents/transcript";
@@ -21,6 +21,14 @@ export function TranscriptView(props: { live: LiveTranscript; session: Accessor<
       if (stick) pane.scrollTop = pane.scrollHeight;
     }),
   );
+  // The pane shrinks when the on-screen keyboard comes up; keep the end in view.
+  onMount(() => {
+    const ro = new ResizeObserver(() => {
+      if (stick) pane.scrollTop = pane.scrollHeight;
+    });
+    ro.observe(pane);
+    onCleanup(() => ro.disconnect());
+  });
 
   return (
     <div class="pane" ref={pane} onScroll={onScroll}>

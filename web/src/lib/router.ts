@@ -1,40 +1,37 @@
-// A tiny hash router. Routes are data; the app matches on them.
-//
-//   #/                         all projects
-//   #/p/<project>              a project's sessions
-//   #/p/<project>/new          start a session
-//   #/p/<project>/s/<session>  one session
+// A tiny hash router: the current route as a signal. Routes themselves live in routes.ts.
 
 import { createSignal } from "solid-js";
+import { home, href, NARROW, parse, tabOf, type Route, type Tab } from "./routes";
 
-export type Route =
-  | { name: "projects" }
-  | { name: "sessions"; project: string; session?: string; creating?: boolean };
+export { href, NARROW, type Route, type Tab };
 
-export function parse(hash: string): Route {
-  const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
-  if (parts[0] === "p" && parts[1]) {
-    const project = parts[1];
-    if (parts[2] === "s" && parts[3]) return { name: "sessions", project, session: parts[3] };
-    if (parts[2] === "new") return { name: "sessions", project, creating: true };
-    return { name: "sessions", project };
-  }
-  return { name: "projects" };
-}
+const initial = home(location.hash, matchMedia(NARROW).matches);
+if (initial.name === "waiting" && !location.hash) history.replaceState(null, "", href(initial));
 
-export function href(r: Route): string {
-  if (r.name === "projects") return "#/";
-  const p = `#/p/${encodeURIComponent(r.project)}`;
-  if (r.session) return `${p}/s/${encodeURIComponent(r.session)}`;
-  if (r.creating) return `${p}/new`;
-  return p;
-}
+// Each history entry records its depth within this app, so "back" never leaves it.
+const depth = () => (history.state as { d?: number } | null)?.d ?? 0;
 
-const [route, setRoute] = createSignal<Route>(parse(location.hash));
-window.addEventListener("hashchange", () => setRoute(parse(location.hash)));
+const [route, setRoute] = createSignal<Route>(initial);
+const [tab, setTab] = createSignal<Tab>(tabOf(initial, "projects"));
+let at = depth();
+window.addEventListener("hashchange", () => {
+  // A fresh entry has no state yet: it is one deeper than where we were.
+  if (history.state?.d == null) history.replaceState({ d: at + 1 }, "");
+  at = depth();
+  const r = parse(location.hash);
+  setRoute(r);
+  setTab((t) => tabOf(r, t));
+});
 
-export { route };
+export { route, tab };
 
 export function go(r: Route) {
   location.hash = href(r);
+}
+
+/** Back from a detail screen: the previous page if we came from one, else the list it belongs to. */
+export function back() {
+  if (depth() > 0) return history.back();
+  const r = route();
+  go(r.name === "sessions" && (r.session || r.creating) ? { name: "sessions", project: r.project } : { name: tab() });
 }

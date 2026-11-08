@@ -780,35 +780,72 @@
   align-items: center;
 }
 
+/* Phone-only pieces; the wide layout never shows them. */
+.tabs,
+.edge,
+.sh .back {
+  display: none;
+}
+
 /* ── narrow screens (phone) ────────────────────────────────────────────── */
 @media (max-width: 760px) {
+  /* Pinned to the visual viewport (lib/viewport.ts), so the keyboard pushes
+     the composer up rather than covering it. */
   .app {
+    position: fixed;
+    inset: var(--vv-top, 0px) 0 auto;
+    height: var(--vv-h, 100%);
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
   }
-  .side {
-    border-right: 0;
-    border-bottom: 1px solid var(--ink);
-    flex-direction: row;
-    align-items: center;
-  }
-  .brand {
-    border-bottom: 0;
-    padding: 10px 12px;
-  }
-  .brand b {
+  .side,
+  .sec.waiting-sec {
     display: none;
   }
-  .side nav {
+
+  /* bottom bar: Waiting · Projects · Sessions */
+  .tabs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    border-top: 1px solid var(--ink);
+    background: var(--paper);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .tab {
+    min-height: 48px;
     display: flex;
-    overflow-x: auto;
-    padding: 6px 8px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font: 500 13px var(--f-ui);
+    letter-spacing: 0.02em;
+    color: var(--ink-3);
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
   }
-  .side .grp {
+  .tab.on {
+    color: var(--ink);
+    box-shadow: inset 0 2px 0 var(--ink);
+  }
+  .tab .badge {
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--red);
+    color: var(--paper);
+    font: 10.5px/18px var(--f-mono);
+    text-align: center;
+  }
+  /* While typing, the composer sits directly on the keyboard. */
+  html.kb .tabs,
+  html.kb .foot {
     display: none;
   }
+
   .foot {
-    padding: 6px 12px calc(6px + env(safe-area-inset-bottom, 0px));
+    padding: 5px 12px;
     gap: 12px;
   }
   .foot .limits {
@@ -822,12 +859,38 @@
   .foot .conn span {
     display: none;
   }
+
   .split {
     grid-template-columns: minmax(0, 1fr);
   }
   .split.has-detail .list,
   .split:not(.has-detail) .detail {
     display: none;
+  }
+  .list {
+    border-right: 0;
+  }
+  .list-h {
+    min-height: 52px;
+    padding: 4px 8px 4px 16px;
+  }
+  .list .grp {
+    padding: 14px 16px 4px;
+  }
+  .row {
+    min-height: 56px;
+    padding: 9px 16px;
+  }
+  .detail {
+    position: relative;
+  }
+  .edge {
+    display: block;
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 20px;
+    z-index: 2;
+    touch-action: none;
   }
   .page {
     padding: 18px 16px 40px;
@@ -837,8 +900,82 @@
     padding-left: 14px;
     padding-right: 14px;
   }
+  .sh {
+    padding-top: 4px;
+    padding-bottom: 8px;
+    gap: 4px 6px;
+  }
+  .sh .back {
+    display: inline-flex;
+    justify-content: center;
+    min-width: 44px;
+    margin-left: -8px;
+    border: 0;
+    background: none;
+    font-size: 26px;
+    font-weight: 400;
+    line-height: 1;
+  }
+  /* row 1: back, status, title; row 2: meta on one line, then the actions */
+  .sh h3 {
+    flex: 1 1 calc(100% - 80px);
+    min-width: 0;
+    font-size: 18px;
+  }
+  .sh .tag {
+    display: none;
+  }
+  .sh .meta {
+    order: 1;
+    width: auto;
+    flex: 1 1 120px; /* too wide to join the title's row */
+    min-width: 0;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .sh .meta > span {
+    flex: none;
+  }
+  .sh .meta > span:first-child {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sh .btn:not(.back) {
+    order: 2;
+  }
+
+  /* touch targets: ≥ 44 px */
+  .btn {
+    min-height: 44px;
+    padding: 0 14px;
+    font-size: 14px;
+  }
+  .ask .acts .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .ask .acts .btn.opt {
+    flex-basis: 100%;
+    justify-content: start;
+    padding: 8px 14px;
+  }
+  .field {
+    min-height: 44px;
+    font-size: 16px; /* below 16px, iOS zooms the page on focus */
+  }
+  .tool summary {
+    padding: 6px 0;
+  }
+
   .composer {
-    margin: 6px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+    margin: 6px 10px 10px;
+    padding: 4px 4px 4px 12px;
+  }
+  .composer textarea {
+    font-size: 16px;
   }
 }
 

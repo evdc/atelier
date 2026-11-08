@@ -1,7 +1,7 @@
 import { createSignal, Show, type Accessor } from "solid-js";
 import type { SessionRow } from "../gen/SessionRow";
 import { createTranscript } from "../agents/transcript";
-import { go } from "../lib/router";
+import { back, go } from "../lib/router";
 import { tokens, usd } from "../lib/time";
 import { Composer } from "./Composer";
 import { useApp } from "./context";
@@ -20,6 +20,9 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
   return (
     <>
       <header class="sh">
+        <button class="btn quiet back" aria-label="Back" onClick={back}>
+          ‹
+        </button>
         <i class={`st ${s().status}`} title={s().status} />
         <h3 title={s().title}>{s().title}</h3>
         <span class={`tag ${s().agent}`}>claude</span>

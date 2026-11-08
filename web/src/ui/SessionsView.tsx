@@ -1,10 +1,11 @@
 import { For, Match, Show, Switch } from "solid-js";
 import type { SessionRow } from "../gen/SessionRow";
-import { href } from "../lib/router";
-import { ago } from "../lib/time";
+import { back, href } from "../lib/router";
 import { byRecent, createView } from "../lib/view";
 import { useApp } from "./context";
+import { EdgeSwipe } from "./EdgeSwipe";
 import { NewSession } from "./NewSession";
+import { SessionRowLink } from "./SessionRowLink";
 import { SessionView } from "./SessionView";
 
 export function SessionsView(props: { project: string; session?: string; creating: boolean }) {
@@ -16,9 +17,11 @@ export function SessionsView(props: { project: string; session?: string; creatin
   const active = () => visible().filter(isActive);
   const earlier = () => visible().filter((s) => !isActive(s));
   const selected = () => (props.session ? sessions.get(props.session) : undefined);
+  const hasDetail = () => !!props.session || props.creating;
+  let detail: HTMLElement | undefined;
 
   return (
-    <div class="split" classList={{ "has-detail": !!props.session || props.creating }}>
+    <div class="split" classList={{ "has-detail": hasDetail() }}>
       <section class="list">
         <header class="list-h">
           <h2>{project()?.name ?? ""}</h2>
@@ -29,16 +32,19 @@ export function SessionsView(props: { project: string; session?: string; creatin
         <div class="pane">
           <Show when={active().length}>
             <div class="grp cap">Active</div>
-            <For each={active()}>{(s) => <Row s={s} on={s.id === props.session} />}</For>
+            <For each={active()}>{(s) => <SessionRowLink s={s} on={s.id === props.session} />}</For>
           </Show>
           <Show when={earlier().length}>
             <div class="grp cap">Earlier</div>
-            <For each={earlier()}>{(s) => <Row s={s} on={s.id === props.session} />}</For>
+            <For each={earlier()}>{(s) => <SessionRowLink s={s} on={s.id === props.session} />}</For>
           </Show>
         </div>
       </section>
 
-      <section class="detail">
+      <section class="detail" ref={detail}>
+        <Show when={hasDetail()}>
+          <EdgeSwipe target={() => detail} onBack={back} />
+        </Show>
         <Switch>
           <Match when={props.creating && project()}>{(p) => <NewSession project={p()} />}</Match>
           <Match when={selected()}>
@@ -70,20 +76,3 @@ export function SessionsView(props: { project: string; session?: string; creatin
 }
 
 const isActive = (s: SessionRow) => s.status === "running" || s.status === "waiting";
-
-function Row(props: { s: SessionRow; on: boolean }) {
-  const s = () => props.s;
-  return (
-    <a class="row" classList={{ on: props.on }} href={href({ name: "sessions", project: s().project, session: s().id })}>
-      <i class={`st ${s().status}`} />
-      <span class="t">{s().title}</span>
-      <span class="when">{ago(s().updated_at)}</span>
-      <span class="m">
-        <Show when={s().status === "waiting"}>
-          <span class="needs">waiting on you</span>
-        </Show>
-        <span>{s().workspace.branch ?? "project dir"}</span>
-      </span>
-    </a>
-  );
-}

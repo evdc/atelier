@@ -7,8 +7,11 @@
 //!   the config it stored in `localStorage` (Settings).
 //!
 //! The UI talks to the server over WebSocket on both. The few Tauri commands (desktop only) exist because they must act on the client machine:
-//! `open_path` ("open this in my terminal/editor/Finder") and `server_status`/`server_restart` (the local server's launchd job).
+//! `open_path` ("open this in my terminal/editor/Finder"), `server_status`/`server_restart` (the local server's launchd job)
+//! and `set_badge_count` (the dock badge).
 
+#[cfg(desktop)]
+mod badge;
 #[cfg(desktop)]
 mod open;
 #[cfg(desktop)]
@@ -19,11 +22,13 @@ use tauri::{WebviewUrl, WebviewWindowBuilder};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
+    // The notification plugin's init script gives the webview `window.Notification` (see web/src/lib/notify.ts).
     #[cfg(desktop)]
-    let builder = builder.invoke_handler(tauri::generate_handler![
+    let builder = builder.plugin(tauri_plugin_notification::init()).invoke_handler(tauri::generate_handler![
         open::open_path,
         server::server_status,
-        server::server_restart
+        server::server_restart,
+        badge::set_badge_count
     ]);
     builder
         .setup(|app| {

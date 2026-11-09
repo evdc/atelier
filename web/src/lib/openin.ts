@@ -8,7 +8,8 @@ interface TauriInternals {
   invoke(cmd: string, args: Record<string, unknown>): Promise<unknown>;
 }
 
-const tauri = (): TauriInternals | undefined =>
+/** The Tauri IPC channel, when running inside the desktop app (or iOS). */
+export const tauri = (): TauriInternals | undefined =>
   (window as unknown as { __TAURI_INTERNALS__?: TauriInternals }).__TAURI_INTERNALS__;
 
 export function isLoopback(url: string): boolean {

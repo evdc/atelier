@@ -7,6 +7,7 @@
 //!           supervisor ◀── driver events   sync: subs (events) + watches (rows)
 //! ```
 
+pub mod browse;
 pub mod config;
 pub mod rpc;
 pub mod supervisor;

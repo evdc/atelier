@@ -123,6 +123,55 @@ pub enum Call {
     /// The unified diff of one changed file. Result: `{ patch }`.
     #[serde(rename = "session.diff")]
     SessionDiff { session: SessionId, path: String },
+    /// Directories inside `path` on the server (default: its user's home), for
+    /// the add-project picker. Result: [`DirListing`].
+    #[serde(rename = "fs.list")]
+    FsList {
+        #[serde(default)]
+        #[ts(optional)]
+        path: Option<String>,
+        /// Include dot-directories.
+        #[serde(default)]
+        #[ts(optional)]
+        hidden: Option<bool>,
+    },
+    /// Recently changed git repositories in the usual places under the
+    /// server's home. Result: [`Suggestions`].
+    #[serde(rename = "fs.suggest")]
+    FsSuggest {},
+}
+
+/// Result of `fs.list`. Directories only, capped at 500 entries.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DirListing {
+    pub path: String,
+    /// `None` at the filesystem root.
+    pub parent: Option<String>,
+    pub entries: Vec<DirEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DirEntry {
+    pub name: String,
+    pub is_dir: bool,
+    /// Has a `.git` entry (a repository, or a worktree).
+    pub is_git: bool,
+}
+
+/// Result of `fs.suggest`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Suggestions {
+    pub entries: Vec<Suggestion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Suggestion {
+    pub path: String,
+    pub name: String,
 }
 
 /// Result of `session.archive`.

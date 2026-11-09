@@ -1,0 +1,84 @@
+# Runs the same `make check` and `make test` a developer runs locally. macOS is the primary platform and builds
+# everything, including the Tauri app. Ubuntu is the VPS case and builds only the server crates.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: macOS (full workspace)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # pnpm must be on PATH before setup-node runs, so setup-node can find the pnpm store for its cache.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install web dependencies
+        run: pnpm -C web install --frozen-lockfile
+
+      - name: make check
+        run: make check
+
+      - name: make test
+        run: make test
+
+  ubuntu:
+    name: Ubuntu (server crates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install web dependencies
+        run: pnpm -C web install --frozen-lockfile
+
+      - name: make check (server crates)
+        run: make check CARGO_SCOPE="--workspace --exclude atelier-app"
+
+      - name: make test (server crates)
+        run: make test CARGO_SCOPE="--workspace --exclude atelier-app"

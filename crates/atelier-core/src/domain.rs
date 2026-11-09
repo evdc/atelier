@@ -212,8 +212,14 @@ pub enum PermissionDecision {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(type = "unknown")]
         updated_input: Option<Value>,
+        /// Permission rules to apply with this allow, verbatim from the request's
+        /// `permission_suggestions` ("always allow"). Forwarded as `updatedPermissions`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(type = "unknown")]
+        updated_permissions: Option<Value>,
     },
     Deny {
+        /// Shown to the agent as the reason the tool was refused.
         message: String,
     },
 }

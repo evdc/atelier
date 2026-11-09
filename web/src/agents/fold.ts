@@ -11,7 +11,7 @@ import type { ProcessExited } from "../gen/ProcessExited";
 import type { TurnEnded } from "../gen/TurnEnded";
 import type { UserMessage } from "../gen/UserMessage";
 import { claude } from "./claude";
-import type { Transcript } from "./model";
+import type { PermissionSuggestion, Transcript } from "./model";
 
 export interface Adapter {
   /** Kind namespace, e.g. "cc". */
@@ -47,7 +47,16 @@ export function fold(t: Transcript, ev: Event) {
     case "permission.requested": {
       const b = ev.body as PermissionRequested;
       t.perms[b.request_id] = t.items.length;
-      t.items.push({ k: "permission", id: b.request_id, ts: ev.ts, tool: b.tool, input: b.input, state: "pending" });
+      const suggestions = (b.raw as { permission_suggestions?: PermissionSuggestion[] }).permission_suggestions ?? [];
+      t.items.push({
+        k: "permission",
+        id: b.request_id,
+        ts: ev.ts,
+        tool: b.tool,
+        input: b.input,
+        state: "pending",
+        suggestions,
+      });
       return;
     }
     case "permission.answered": {

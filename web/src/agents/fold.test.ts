@@ -46,6 +46,15 @@ describe("fold", () => {
     expect(t.items[0]?.k === "permission" && t.items[0].state).toBe("void");
   });
 
+  it("keeps the request's permission suggestions for \"always allow\"", () => {
+    const t = emptyTranscript();
+    const rule = { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "npm test" }], behavior: "allow" };
+    fold(t, ev("permission.requested", { request_id: "r", tool: "Bash", input: {}, raw: { permission_suggestions: [rule] } }));
+    fold(t, ev("permission.requested", { request_id: "q", tool: "Bash", input: {}, raw: {} }));
+    expect(t.items[0]?.k === "permission" && t.items[0].suggestions).toEqual([rule]);
+    expect(t.items[1]?.k === "permission" && t.items[1].suggestions).toEqual([]);
+  });
+
   it("ignores unknown kinds", () => {
     const t = emptyTranscript();
     fold(t, ev("cc.rate_limit_event", {}));

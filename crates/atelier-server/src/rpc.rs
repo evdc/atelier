@@ -1,13 +1,19 @@
 //! Command handlers. Each validates, appends events, and returns a small
 //! result (usually an id). State reaches clients through subs and watches,
 //! never through RPC results.
+//!
+//! One deliberate exception: `session.changes` and `session.diff` return a
+//! computed snapshot of the filesystem (git's view of a worktree). That's a
+//! read, like `cat`, not state of the system; nothing is logged for it.
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
-use atelier_core::domain::{AgentKind, ProjectAdded, ProjectRemoved, SessionArchived, SessionCreated};
+use atelier_core::domain::{
+    AgentKind, ProjectAdded, ProjectRemoved, SessionArchived, SessionCreated, WorkspaceMode, WorkspaceRemoved,
+};
 use atelier_core::{Actor, NewEvent, SessionId, stream};
-use atelier_proto::{Call, ProjectRow, SessionRow};
+use atelier_proto::{Archived, Call, ProjectRow, SessionRow};
 use serde_json::{Value, json};
 
 use crate::{App, views, workspace};
@@ -17,6 +23,11 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
         Call::ProjectAdd { path, name } => project_add(app, path, name).await,
         Call::ProjectRemove { project } => {
             let p = project_row(app, project.as_str()).await?;
+            let id = p.id.0.clone();
+            let live = app.store.read(move |c| views::sessions::list(c, Some(&id))).await?;
+            if live.iter().any(|s| s.alive) {
+                bail!("{} has running agents; stop them first", p.name);
+            }
             app.store.append_one(NewEvent::new(stream::GLOBAL, Actor::User, &ProjectRemoved { id: p.id })).await?;
             Ok(Value::Null)
         }
@@ -66,7 +77,32 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             let s = session_row(app, &session).await?;
             app.supervisor.stop(&s.id);
             app.store.append_one(NewEvent::new(&s.stream, Actor::User, &SessionArchived {})).await?;
-            Ok(Value::Null)
+            let mut result = Archived { removed: false, kept: None };
+            if s.workspace.mode == WorkspaceMode::Worktree && !s.archived {
+                let p = project_row(app, s.project.as_str()).await?;
+                match workspace::unsafe_to_remove(&p, &s.workspace).await {
+                    Ok(None) => match workspace::remove(&p, &s.workspace).await {
+                        Ok(()) => {
+                            let gone =
+                                WorkspaceRemoved { path: s.workspace.path.clone(), branch: s.workspace.branch.clone() };
+                            app.store.append_one(NewEvent::new(&s.stream, Actor::User, &gone)).await?;
+                            result.removed = true;
+                        }
+                        Err(e) => result.kept = Some(format!("couldn't remove the worktree: {e}")),
+                    },
+                    Ok(Some(why)) => result.kept = Some(why),
+                    Err(e) => result.kept = Some(format!("couldn't inspect the worktree: {e}")),
+                }
+            }
+            Ok(serde_json::to_value(result)?)
+        }
+        Call::SessionChanges { session } => {
+            let s = session_row(app, &session).await?;
+            Ok(serde_json::to_value(workspace::changes(&s.workspace).await?)?)
+        }
+        Call::SessionDiff { session, path } => {
+            let s = session_row(app, &session).await?;
+            Ok(json!({ "patch": workspace::diff(&s.workspace, &path).await? }))
         }
     }
 }

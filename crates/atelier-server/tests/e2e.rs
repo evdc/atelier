@@ -267,3 +267,117 @@ async fn tailnet_peers_and_tokens() {
 
     app.supervisor.shutdown().await;
 }
+
+async fn boot(tmp: &Path) -> (App, std::net::SocketAddr) {
+    let config = Config {
+        home: tmp.join("home"),
+        listen: "127.0.0.1:0".parse().unwrap(),
+        listen_tailscale: false,
+        tailscale_bin: "false".into(),
+        claude_bin: FAKE.into(),
+        token: Some("secret".into()),
+    };
+    std::fs::create_dir_all(&config.home).unwrap();
+    let app = App::start(config).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(listener, app.router()).into_future());
+    (app, addr)
+}
+
+async fn rpc_err(c: &mut Client, method: &str, params: Value) -> String {
+    let id = 1000 + c.next_id;
+    c.send(json!({"t": "rpc", "id": id, "call": {"method": method, "params": params}})).await;
+    let reply = c.until(|m| m["id"] == id).await;
+    assert_eq!(reply["t"], "error", "{method} should fail: {reply}");
+    reply["error"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn worktree_changes_and_archive_cleanup() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+
+    let (app, addr) = boot(tmp.path()).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    c.send(json!({"t": "watch", "id": 2, "view": "sessions", "scope": project})).await;
+    c.until(|m| m["t"] == "snapshot" && m["watch"] == 2).await;
+
+    // ── dirty case ──
+    let dirty = c.rpc("session.create", json!({"project": project, "prompt": "dirty"})).await["id"].clone();
+    let row = c.until(|m| session_row_matches(m, |r| r["id"] == dirty && r["status"] == "waiting")).await;
+    let ws = row["upsert"][0]["workspace"].clone();
+    let (path, branch) =
+        (Path::new(ws["path"].as_str().unwrap()).to_owned(), ws["branch"].as_str().unwrap().to_owned());
+
+    let none = c.rpc("session.changes", json!({"session": dirty})).await;
+    assert_eq!(none["files"], json!([]));
+
+    std::fs::write(path.join("a.txt"), "one\nTWO\nthree\n").unwrap();
+    std::fs::write(path.join("new.txt"), "x\ny\n").unwrap();
+    let ch = c.rpc("session.changes", json!({"session": dirty})).await;
+    assert_eq!(
+        ch["files"],
+        json!([
+            {"path": "a.txt", "status": "modified", "added": 2, "removed": 1},
+            {"path": "new.txt", "status": "untracked", "added": 2, "removed": 0},
+        ])
+    );
+    let patch = c.rpc("session.diff", json!({"session": dirty, "path": "a.txt"})).await["patch"].clone();
+    assert!(patch.as_str().unwrap().contains("+TWO"), "{patch}");
+    let patch = c.rpc("session.diff", json!({"session": dirty, "path": "new.txt"})).await["patch"].clone();
+    assert!(patch.as_str().unwrap().contains("+x"), "{patch}");
+    rpc_err(&mut c, "session.diff", json!({"session": dirty, "path": "../repo/a.txt"})).await;
+
+    // Live agent: the project can't be removed.
+    let why = rpc_err(&mut c, "project.remove", json!({"project": project})).await;
+    assert!(why.contains("running"), "{why}");
+
+    // Uncommitted work: archive keeps everything and says why.
+    let r = c.rpc("session.archive", json!({"session": dirty})).await;
+    assert_eq!(r["removed"], false);
+    assert!(r["kept"].as_str().unwrap().contains("uncommitted"), "{r}");
+    assert!(path.exists());
+
+    // ── clean case ──
+    let clean = c.rpc("session.create", json!({"project": project, "prompt": "clean"})).await["id"].clone();
+    let row = c.until(|m| session_row_matches(m, |r| r["id"] == clean && r["status"] == "waiting")).await;
+    let ws = &row["upsert"][0]["workspace"];
+    let (cpath, cbranch) =
+        (Path::new(ws["path"].as_str().unwrap()).to_owned(), ws["branch"].as_str().unwrap().to_owned());
+    let r = c.rpc("session.archive", json!({"session": clean})).await;
+    assert_eq!(r["removed"], true, "{r}");
+    assert!(!cpath.exists());
+    let branches = std::process::Command::new("git").arg("-C").arg(&repo).args(["branch", "--list"]).output().unwrap();
+    let branches = String::from_utf8_lossy(&branches.stdout);
+    assert!(!branches.contains(&cbranch) && branches.contains(&branch), "{branches}");
+
+    // A committed, unmerged branch is kept too.
+    git(&path, &["add", "."]);
+    git(&path, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "work"]);
+    let unmerged = c.rpc("session.create", json!({"project": project, "prompt": "unmerged"})).await["id"].clone();
+    c.until(|m| session_row_matches(m, |r| r["id"] == unmerged && r["status"] == "waiting")).await;
+    let row = c.seen.iter().rev().find(|m| session_row_matches(m, |r| r["id"] == unmerged)).unwrap().clone();
+    let upath = Path::new(row["upsert"][0]["workspace"]["path"].as_str().unwrap()).to_owned();
+    std::fs::write(upath.join("b.txt"), "b\n").unwrap();
+    git(&upath, &["add", "."]);
+    git(&upath, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "b"]);
+    let r = c.rpc("session.archive", json!({"session": unmerged})).await;
+    assert_eq!(r["removed"], false);
+    assert!(r["kept"].as_str().unwrap().contains("aren't merged"), "{r}");
+    let ch = c.rpc("session.changes", json!({"session": unmerged})).await;
+    assert_eq!(ch["files"][0]["path"], "b.txt");
+
+    // The removal is in the log.
+    let clean_stream = format!("p/{}/s/{}", project.as_str().unwrap(), clean.as_str().unwrap());
+    c.send(json!({"t": "sub", "id": 7, "filter": {"stream": clean_stream}, "from": 1})).await;
+    c.until(|m| m["t"] == "live" && m["sub"] == 7).await;
+    assert!(c.event_kinds().iter().any(|k| k == "workspace.removed"));
+    app.supervisor.shutdown().await;
+}

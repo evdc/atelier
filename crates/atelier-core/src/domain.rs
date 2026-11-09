@@ -99,6 +99,17 @@ kind!(SessionRenamed, "session.renamed");
 pub struct SessionArchived {}
 kind!(SessionArchived, "session.archived");
 
+/// A session's worktree and branch were deleted (on archive, when nothing
+/// would be lost).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct WorkspaceRemoved {
+    pub path: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+kind!(WorkspaceRemoved, "workspace.removed");
+
 /// A message from the person to the agent. Starts a turn.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]

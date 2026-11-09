@@ -138,8 +138,10 @@ fn commit_group(
 }
 
 fn insert(c: &Connection, ne: NewEvent, ts: i64) -> Result<Event> {
-    c.prepare_cached("INSERT INTO events (stream, ts, kind, actor, cause, body) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")?
-        .execute(params![ne.stream, ts, ne.kind, ne.actor, ne.cause, ne.body.get()])?;
+    c.prepare_cached(
+        "INSERT INTO events (stream, ts, kind, actor, cause, body, project) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?
+    .execute(params![ne.stream, ts, ne.kind, ne.actor, ne.cause, ne.body.get(), crate::project_of(&ne.stream)])?;
     Ok(Event {
         seq: c.last_insert_rowid(),
         stream: ne.stream,

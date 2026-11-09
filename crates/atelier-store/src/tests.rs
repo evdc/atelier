@@ -106,3 +106,81 @@ async fn projection_catches_up_and_rebuilds_on_version_bump() {
     let store = Store::open(&path, vec![Box::new(Sums { version: 2 })]).unwrap();
     assert_eq!(total(&store, "s").await, 7);
 }
+
+/// Prefix catch-up must return exactly what `StreamFilter::matches` selects,
+/// in seq order, however it is paged. Streams are picked to trip a naive
+/// prefix match: `p/xy/` vs `p/x/`, project-level and empty-project streams.
+#[tokio::test]
+async fn prefix_catch_up_matches_stream_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join("a.db"), vec![]).unwrap();
+    let streams = ["p/x/s/1", "p/x/s/2", "p/xy/s/1", "p/x", "p/x/", "p/", "p//s/1", "global"];
+    for round in 0..40 {
+        store.append(streams.iter().map(|s| ping(s, round)).collect()).await.unwrap();
+    }
+
+    let all = store.events(StreamFilter::Prefix(String::new()), 1, 10_000).await.unwrap();
+    assert_eq!(all.len(), streams.len() * 40);
+    for prefix in ["", "p/", "p/x/", "p/xy/", "p/x", "p/x/s/", "p/x/s/1", "p//", "p/z/", "global"] {
+        let filter = StreamFilter::Prefix(prefix.into());
+        for from in [1, 50, 200] {
+            let want: Vec<Seq> =
+                all.iter().filter(|e| e.seq >= from && filter.matches(&e.stream)).map(|e| e.seq).collect();
+            let mut got = Vec::new();
+            let mut next = from;
+            loop {
+                let page = store.events(filter.clone(), next, 7).await.unwrap();
+                let Some(last) = page.last().map(|e| e.seq) else { break };
+                got.extend(page.iter().map(|e| e.seq));
+                next = last + 1;
+            }
+            assert_eq!(got, want, "prefix {prefix:?} from {from}");
+        }
+    }
+}
+
+/// A log written before the `project` column existed gets it backfilled on open.
+#[tokio::test]
+async fn legacy_database_gets_project_backfilled() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy.db");
+    {
+        let c = Connection::open(&path).unwrap();
+        c.execute_batch(
+            "CREATE TABLE events (
+                seq INTEGER PRIMARY KEY, stream TEXT NOT NULL, ts INTEGER NOT NULL, kind TEXT NOT NULL,
+                actor TEXT NOT NULL, cause INTEGER, body TEXT NOT NULL
+             ) STRICT;
+             CREATE INDEX events_by_stream ON events(stream, seq);",
+        )
+        .unwrap();
+        for s in ["p/a/s/1", "p/ab/s/1", "p/a/s/2", "global"] {
+            c.execute(
+                "INSERT INTO events (stream, ts, kind, actor, body) VALUES (?1, 0, 'test.ping', 'user', '{\"n\":1}')",
+                params![s],
+            )
+            .unwrap();
+        }
+    }
+
+    let store = Store::open(&path, vec![]).unwrap();
+    let px = store.events(StreamFilter::Prefix("p/a/".into()), 1, 10).await.unwrap();
+    assert_eq!(px.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1, 3]);
+    let unset = store
+        .read(|c| {
+            Ok(c.query_row("SELECT COUNT(*) FROM events WHERE stream GLOB 'p/*/*' AND project IS NULL", [], |r| {
+                r.get::<_, i64>(0)
+            })?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(unset, 0);
+
+    store.append_one(ping("p/a/s/3", 1)).await.unwrap();
+    assert_eq!(store.events(StreamFilter::Prefix("p/a/".into()), 1, 10).await.unwrap().len(), 3);
+    drop(store);
+
+    // Reopening is a no-op: nothing is re-backfilled or duplicated.
+    let store = Store::open(&path, vec![]).unwrap();
+    assert_eq!(store.events(StreamFilter::Prefix("p/a/".into()), 1, 10).await.unwrap().len(), 3);
+}

@@ -62,8 +62,8 @@ impl Store {
     /// date with the log before returning.
     pub fn open(path: impl AsRef<Path>, projections: Vec<Box<dyn Projection>>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let conn = open_conn(&path, false)?;
-        schema(&conn)?;
+        let mut conn = open_conn(&path, false)?;
+        schema(&mut conn)?;
         let head = Arc::new(AtomicI64::new(read::head(&conn)?));
         let (feed, _) = broadcast::channel(FEED_CAPACITY);
         let writer = writer::spawn(conn, projections, feed.clone(), head.clone())?;
@@ -145,16 +145,17 @@ fn open_conn(path: &Path, read_only: bool) -> Result<Connection> {
     Ok(conn)
 }
 
-fn schema(conn: &Connection) -> Result<()> {
+fn schema(conn: &mut Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS events (
-            seq    INTEGER PRIMARY KEY,
-            stream TEXT    NOT NULL,
-            ts     INTEGER NOT NULL,
-            kind   TEXT    NOT NULL,
-            actor  TEXT    NOT NULL,
-            cause  INTEGER,
-            body   TEXT    NOT NULL
+            seq     INTEGER PRIMARY KEY,
+            stream  TEXT    NOT NULL,
+            ts      INTEGER NOT NULL,
+            kind    TEXT    NOT NULL,
+            actor   TEXT    NOT NULL,
+            cause   INTEGER,
+            body    TEXT    NOT NULL,
+            project TEXT
          ) STRICT;
          CREATE INDEX IF NOT EXISTS events_by_stream ON events(stream, seq);
          CREATE TABLE IF NOT EXISTS projections (
@@ -163,7 +164,44 @@ fn schema(conn: &Connection) -> Result<()> {
             seq     INTEGER NOT NULL
          ) STRICT;",
     )?;
+    add_project_column(conn)?;
     Ok(())
+}
+
+/// Logs written before `events.project` existed get it added and backfilled
+/// here, then the `(project, seq)` index is built. Runs on every open; a no-op
+/// once done.
+fn add_project_column(conn: &mut Connection) -> Result<()> {
+    let tx = conn.transaction()?;
+    let has_column: i64 =
+        tx.query_row("SELECT COUNT(*) FROM pragma_table_info('events') WHERE name = 'project'", [], |r| r.get(0))?;
+    if has_column == 0 {
+        tx.execute_batch("ALTER TABLE events ADD COLUMN project TEXT")?;
+        // Same rule as `project_of`: the text between `p/` and the next `/`.
+        let backfilled = tx.execute(
+            "UPDATE events SET project = substr(stream, 3, instr(substr(stream, 3), '/') - 1)
+             WHERE stream GLOB 'p/*/*'",
+            [],
+        )?;
+        tracing::info!("events.project added; backfilled {backfilled} rows");
+    }
+    tx.execute_batch("CREATE INDEX IF NOT EXISTS events_by_project ON events(project, seq)")?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// The project a stream belongs to, for the `events.project` column: the text
+/// between `p/` and the next `/`. `None` for streams outside a project.
+pub(crate) fn project_of(stream: &str) -> Option<&str> {
+    let (project, _) = stream.strip_prefix("p/")?.split_once('/')?;
+    Some(project)
+}
+
+/// If `prefix` is exactly `p/<project>/`, the project it selects. Such a prefix
+/// matches the same streams as `project = <project>`, which is index-ordered.
+pub(crate) fn project_prefix(prefix: &str) -> Option<&str> {
+    let project = prefix.strip_prefix("p/")?.strip_suffix('/')?;
+    (!project.contains('/')).then_some(project)
 }
 
 #[cfg(test)]

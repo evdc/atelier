@@ -7,15 +7,15 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use atelier_core::domain::*;
 use atelier_core::{Actor, NewEvent, SessionId};
 use atelier_driver::{AgentCmd, AgentDriver, DriverEvent, Resume, StartSpec};
-use atelier_proto::SessionRow;
+use atelier_proto::{SessionRow, SessionStatus};
 use atelier_store::Store;
 use serde_json::value::RawValue;
 use tokio::sync::{broadcast, mpsc};
@@ -45,9 +45,18 @@ struct Inner {
     generation: AtomicU64,
 }
 
+/// How often the reaper looks for idle processes.
+const REAP_EVERY: Duration = Duration::from_secs(30);
+/// `process.exited.detail` for a process the reaper stopped.
+pub const IDLE_DETAIL: &str = "idle";
+
 struct Proc {
     generation: u64,
     cmds: mpsc::UnboundedSender<AgentCmd>,
+    /// Last driver event or command. Runtime state for the reaper, not log state.
+    last_active: Instant,
+    /// Set by the reaper. The process stays listed until its exit is logged.
+    reaping: Arc<AtomicBool>,
 }
 
 impl Supervisor {
@@ -69,6 +78,51 @@ impl Supervisor {
         self.inner.eph.subscribe()
     }
 
+    /// Stop processes whose session has been idle for `idle`. They come back on the next message.
+    pub fn spawn_reaper(&self, idle: Duration) {
+        // Looking less often than the timeout would make short timeouts (tests) overshoot.
+        let every = REAP_EVERY.min(idle).max(Duration::from_millis(100));
+        let this = self.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(every);
+            loop {
+                tick.tick().await;
+                this.reap_idle(idle).await;
+            }
+        });
+    }
+
+    /// Stop processes that have been quiet for `idle` while their session is idle: no turn running, no
+    /// permission request waiting. Quiet is re-checked under the lock, so a command that arrives while we
+    /// look keeps its process.
+    async fn reap_idle(&self, idle: Duration) {
+        let quiet: Vec<SessionId> = {
+            let actors = self.inner.actors.lock().unwrap();
+            actors
+                .iter()
+                .filter(|(_, p)| !p.reaping.load(Ordering::Acquire) && p.last_active.elapsed() >= idle)
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in quiet {
+            let key = id.clone();
+            let Ok(Some(row)) = self.inner.store.read(move |c| views::sessions::get(c, key.as_str())).await else {
+                continue;
+            };
+            if !matches!(row.status, SessionStatus::Idle) || row.pending > 0 {
+                continue;
+            }
+            let mut actors = self.inner.actors.lock().unwrap();
+            let Some(p) = actors.get_mut(&id) else { continue };
+            if p.reaping.load(Ordering::Acquire) || p.cmds.is_closed() || p.last_active.elapsed() < idle {
+                continue;
+            }
+            tracing::info!(session = %id, "stopping idle agent process");
+            p.reaping.store(true, Ordering::Release);
+            let _ = p.cmds.send(AgentCmd::Shutdown);
+        }
+    }
+
     /// Sessions the log believes are alive can't be after a restart: the
     /// processes died with the previous server. Record that.
     pub async fn recover(&self) -> Result<()> {
@@ -76,7 +130,12 @@ impl Supervisor {
         let events: Vec<_> = stale
             .iter()
             .map(|s| {
-                let body = ProcessExited { reason: ExitReason::ServerRestart, code: None, stderr_tail: String::new() };
+                let body = ProcessExited {
+                    reason: ExitReason::ServerRestart,
+                    code: None,
+                    stderr_tail: String::new(),
+                    detail: None,
+                };
                 NewEvent::new(s.stream.clone(), Actor::Atelier, &body)
             })
             .collect();
@@ -92,6 +151,7 @@ impl Supervisor {
         if s.archived {
             bail!("session is archived");
         }
+        self.wait_stopped(&s.id).await?;
         self.append(s, Actor::User, &UserMessage { text: text.clone() }).await?;
         let cmds = self.ensure_running(s).await?;
         cmds.send(AgentCmd::Send(text)).map_err(|_| anyhow!("agent exited before receiving the message"))
@@ -136,15 +196,35 @@ impl Supervisor {
         }
     }
 
+    /// The live process's command channel. Taking it counts as activity.
     fn running(&self, id: &SessionId) -> Option<mpsc::UnboundedSender<AgentCmd>> {
-        let actors = self.inner.actors.lock().unwrap();
-        actors.get(id).filter(|a| !a.cmds.is_closed()).map(|a| a.cmds.clone())
+        let mut actors = self.inner.actors.lock().unwrap();
+        let a = actors.get_mut(id)?;
+        if a.cmds.is_closed() || a.reaping.load(Ordering::Acquire) {
+            return None;
+        }
+        a.last_active = Instant::now();
+        Some(a.cmds.clone())
+    }
+
+    /// A reaped process may still be exiting. Its exit must be logged before a replacement starts, or the
+    /// replacement's events would be ordered after an exit that isn't its own.
+    async fn wait_stopped(&self, id: &SessionId) -> Result<()> {
+        for _ in 0..100 {
+            let stopping = self.inner.actors.lock().unwrap().get(id).is_some_and(|p| p.reaping.load(Ordering::Acquire));
+            if !stopping {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        bail!("the agent is still stopping; try again in a moment")
     }
 
     async fn ensure_running(&self, s: &SessionRow) -> Result<mpsc::UnboundedSender<AgentCmd>> {
         if let Some(cmds) = self.running(&s.id) {
             return Ok(cmds);
         }
+        self.wait_stopped(&s.id).await?;
         let native = {
             let id = s.id.clone();
             self.inner.store.read(move |c| views::sessions::native_id(c, id.as_str())).await?
@@ -159,7 +239,12 @@ impl Supervisor {
         let handle = match self.inner.driver.start(spec) {
             Ok(h) => h,
             Err(e) => {
-                let body = ProcessExited { reason: ExitReason::SpawnFailed, code: None, stderr_tail: format!("{e:#}") };
+                let body = ProcessExited {
+                    reason: ExitReason::SpawnFailed,
+                    code: None,
+                    stderr_tail: format!("{e:#}"),
+                    detail: None,
+                };
                 self.append(s, Actor::Atelier, &body).await?;
                 return Err(e);
             }
@@ -168,15 +253,27 @@ impl Supervisor {
             .await?;
 
         let generation = self.inner.generation.fetch_add(1, Ordering::Relaxed);
-        self.inner.actors.lock().unwrap().insert(s.id.clone(), Proc { generation, cmds: handle.cmds.clone() });
-        tokio::spawn(self.clone().pump(s.id.clone(), s.stream.clone(), generation, handle.events));
+        let reaping = Arc::new(AtomicBool::new(false));
+        self.inner.actors.lock().unwrap().insert(
+            s.id.clone(),
+            Proc { generation, cmds: handle.cmds.clone(), last_active: Instant::now(), reaping: reaping.clone() },
+        );
+        tokio::spawn(self.clone().pump(s.id.clone(), s.stream.clone(), generation, reaping, handle.events));
         Ok(handle.cmds)
     }
 
     /// Move one process's output into the log until it exits.
-    async fn pump(self, id: SessionId, stream: String, generation: u64, mut events: mpsc::Receiver<DriverEvent>) {
+    async fn pump(
+        self,
+        id: SessionId,
+        stream: String,
+        generation: u64,
+        reaping: Arc<AtomicBool>,
+        mut events: mpsc::Receiver<DriverEvent>,
+    ) {
         let actor = Actor::Agent(id.clone());
         while let Some(ev) = events.recv().await {
+            self.touch(&id, generation);
             let new = match ev {
                 DriverEvent::Raw { kind, body } => NewEvent::raw(&stream, kind, actor.clone(), body),
                 DriverEvent::Ephemeral { kind, body } => {
@@ -190,20 +287,36 @@ impl Supervisor {
                     self.inner.pending.lock().unwrap().insert((id.clone(), p.request_id.clone()));
                     NewEvent::new(&stream, actor.clone(), &p)
                 }
-                DriverEvent::Exited(x) => {
-                    {
-                        let mut actors = self.inner.actors.lock().unwrap();
-                        if actors.get(&id).is_some_and(|a| a.generation == generation) {
-                            actors.remove(&id);
-                        }
+                DriverEvent::Exited(mut x) => {
+                    if reaping.load(Ordering::Acquire) {
+                        x.detail = Some(IDLE_DETAIL.to_owned());
                     }
                     self.inner.pending.lock().unwrap().retain(|(s, _)| s != &id);
-                    NewEvent::new(&stream, Actor::Atelier, &x)
+                    // Logged before the process is forgotten (see `wait_stopped`).
+                    let new = NewEvent::new(&stream, Actor::Atelier, &x);
+                    if let Err(e) = self.inner.store.append_one(new).await {
+                        tracing::error!(session = %id, "dropping exit event: {e:#}");
+                    }
+                    break;
                 }
             };
             if let Err(e) = self.inner.store.append_one(new).await {
                 tracing::error!(session = %id, "dropping agent event: {e:#}");
             }
+        }
+        self.forget(&id, generation);
+    }
+
+    fn touch(&self, id: &SessionId, generation: u64) {
+        if let Some(a) = self.inner.actors.lock().unwrap().get_mut(id).filter(|a| a.generation == generation) {
+            a.last_active = Instant::now();
+        }
+    }
+
+    fn forget(&self, id: &SessionId, generation: u64) {
+        let mut actors = self.inner.actors.lock().unwrap();
+        if actors.get(id).is_some_and(|a| a.generation == generation) {
+            actors.remove(id);
         }
     }
 

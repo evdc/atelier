@@ -54,6 +54,7 @@ impl App {
         let store = Store::open(config.db_path(), views::projections())?;
         let supervisor = Supervisor::new(store.clone(), driver);
         supervisor.recover().await?;
+        supervisor.spawn_reaper(config.idle_timeout);
         let (stopping, _) = tokio::sync::watch::channel(false);
         let peers = Arc::new(tailnet::Tailscale::new(config.tailscale_bin.clone()));
         Ok(Self { config: Arc::new(config), store, supervisor, stopping, peers })

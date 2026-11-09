@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 
@@ -18,6 +19,9 @@ pub struct Config {
     pub tailscale_bin: PathBuf,
     /// `ATELIER_CLAUDE_BIN`, default `claude` (from PATH).
     pub claude_bin: PathBuf,
+    /// `ATELIER_IDLE_SECS`, default 600: an agent process whose session has been idle this long is stopped
+    /// and resumed on the next message.
+    pub idle_timeout: Duration,
     /// Shared secret clients present in `hello`. Generated on first run and
     /// stored in `<home>/token`. `None` disables auth (tests only).
     pub token: Option<String>,
@@ -48,8 +52,20 @@ impl Config {
         let listen_tailscale =
             std::env::var("ATELIER_LISTEN_TAILSCALE").is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "yes"));
         let tailscale_bin = crate::tailnet::Tailscale::find_bin();
+        let idle_secs: u64 = match std::env::var("ATELIER_IDLE_SECS") {
+            Ok(v) => v.parse().context("ATELIER_IDLE_SECS must be a whole number of seconds")?,
+            Err(_) => 600,
+        };
         let token = Some(atelier_proto::local::token(&home)?);
-        Ok(Self { home, listen, listen_tailscale, tailscale_bin, claude_bin, token })
+        Ok(Self {
+            home,
+            listen,
+            listen_tailscale,
+            tailscale_bin,
+            claude_bin,
+            idle_timeout: Duration::from_secs(idle_secs),
+            token,
+        })
     }
 
     pub fn db_path(&self) -> PathBuf {

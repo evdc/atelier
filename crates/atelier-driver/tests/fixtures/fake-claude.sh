@@ -4,6 +4,12 @@
 # permission request. The answer to that request ends the turn, echoing the
 # control_response we received so tests can inspect it. The init message says
 # whether this process was started with --resume.
+# The one-shot titler (`claude -p --no-session-persistence ... --output-format json`) gets a fixed title.
+case "$*" in
+  *--no-session-persistence*)
+    echo '{"type":"result","subtype":"success","is_error":false,"result":"Login rate limits"}'
+    exit 0 ;;
+esac
 resumed=false
 for arg in "$@"; do
   [ "$arg" = "--resume" ] && resumed=true

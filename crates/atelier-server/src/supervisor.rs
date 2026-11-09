@@ -6,7 +6,7 @@
 //! on which permission requests are still answerable.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -20,7 +20,7 @@ use atelier_store::Store;
 use serde_json::value::RawValue;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::views;
+use crate::{autotitle, views};
 
 /// A live-only event (token deltas, status pings). Never persisted.
 #[derive(Debug)]
@@ -43,6 +43,8 @@ struct Inner {
     /// (session, request id) of requests that can still be answered.
     pending: Mutex<HashSet<(SessionId, String)>>,
     generation: AtomicU64,
+    /// The `claude` binary for one-shot titles; `None` turns them off.
+    title_bin: Option<PathBuf>,
 }
 
 /// How often the reaper looks for idle processes.
@@ -60,7 +62,7 @@ struct Proc {
 }
 
 impl Supervisor {
-    pub fn new(store: Store, driver: Arc<dyn AgentDriver>) -> Self {
+    pub fn new(store: Store, driver: Arc<dyn AgentDriver>, title_bin: Option<PathBuf>) -> Self {
         let (eph, _) = broadcast::channel(4096);
         Self {
             inner: Arc::new(Inner {
@@ -70,6 +72,7 @@ impl Supervisor {
                 actors: Mutex::default(),
                 pending: Mutex::default(),
                 generation: AtomicU64::new(0),
+                title_bin,
             }),
         }
     }
@@ -274,6 +277,7 @@ impl Supervisor {
         let actor = Actor::Agent(id.clone());
         while let Some(ev) = events.recv().await {
             self.touch(&id, generation);
+            let mut turn_ok = false;
             let new = match ev {
                 DriverEvent::Raw { kind, body } => NewEvent::raw(&stream, kind, actor.clone(), body),
                 DriverEvent::Ephemeral { kind, body } => {
@@ -282,7 +286,10 @@ impl Supervisor {
                     continue;
                 }
                 DriverEvent::Bound { native_id } => NewEvent::new(&stream, actor.clone(), &AgentBound { native_id }),
-                DriverEvent::TurnEnded(t) => NewEvent::new(&stream, actor.clone(), &t),
+                DriverEvent::TurnEnded(t) => {
+                    turn_ok = !t.is_error;
+                    NewEvent::new(&stream, actor.clone(), &t)
+                }
                 DriverEvent::Permission(p) => {
                     self.inner.pending.lock().unwrap().insert((id.clone(), p.request_id.clone()));
                     NewEvent::new(&stream, actor.clone(), &p)
@@ -303,6 +310,9 @@ impl Supervisor {
             if let Err(e) = self.inner.store.append_one(new).await {
                 tracing::error!(session = %id, "dropping agent event: {e:#}");
             }
+            if turn_ok {
+                self.spawn_auto_title(&id, &stream);
+            }
         }
         self.forget(&id, generation);
     }
@@ -318,6 +328,33 @@ impl Supervisor {
         if actors.get(id).is_some_and(|a| a.generation == generation) {
             actors.remove(id);
         }
+    }
+
+    /// Titles the session in the background, so the pump never waits on the titler.
+    fn spawn_auto_title(&self, id: &SessionId, stream: &str) {
+        let Some(bin) = self.inner.title_bin.clone() else { return };
+        let this = self.clone();
+        let (id, stream) = (id.clone(), stream.to_owned());
+        tokio::spawn(async move {
+            if let Err(e) = this.auto_title(&id, &stream, &bin).await {
+                tracing::warn!(session = %id, "auto-title: {e:#}");
+            }
+        });
+    }
+
+    async fn auto_title(&self, id: &SessionId, stream: &str, bin: &Path) -> Result<()> {
+        let (sid, st) = (id.to_string(), stream.to_owned());
+        let Some(ex) = self.inner.store.read(move |c| autotitle::exchange(c, &sid, &st)).await? else {
+            return Ok(());
+        };
+        let Some(title) = autotitle::ask(bin, &ex).await? else { return Ok(()) };
+        // The person may have renamed the session while the titler was thinking.
+        let st = stream.to_owned();
+        if self.inner.store.read(move |c| autotitle::renamed(c, &st)).await? {
+            return Ok(());
+        }
+        self.inner.store.append_one(NewEvent::new(stream, Actor::Atelier, &SessionRenamed { title })).await?;
+        Ok(())
     }
 
     async fn append<B: atelier_core::EventBody>(&self, s: &SessionRow, actor: Actor, body: &B) -> Result<()> {

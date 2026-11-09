@@ -96,6 +96,7 @@ async fn session_lifecycle_over_websocket() {
         tailscale_bin: "false".into(),
         claude_bin: FAKE.into(),
         idle_timeout: Duration::from_secs(600),
+        auto_title: false,
         token: Some("secret".into()),
     };
     std::fs::create_dir_all(&config.home).unwrap();
@@ -166,6 +167,13 @@ async fn session_lifecycle_over_websocket() {
 
     c.rpc("session.stop", json!({"session": sid})).await;
     c.until(|m| session_row_matches(m, |r| r["alive"] == false)).await;
+    // The row can arrive before the event that caused it, so wait for the event itself.
+    if !c.event_kinds().iter().any(|k| k == "process.exited") {
+        c.until(|m| {
+            m["t"] == "events" && m["events"].as_array().unwrap().iter().any(|e| e["kind"] == "process.exited")
+        })
+        .await;
+    }
 
     let kinds = c.event_kinds();
     for k in [
@@ -195,6 +203,31 @@ fn kinds_in(frame: &Value) -> Vec<(String, Value)> {
         .unwrap()
         .iter()
         .map(|e| (e["kind"].as_str().unwrap().to_owned(), e["body"].clone()))
+        .collect()
+}
+
+/// Create a project and a session in it, and watch that project's sessions.
+/// Returns the project id, the session id and its stream.
+async fn session_in_project(c: &mut Client, repo: &Path, prompt: &str) -> (Value, Value, String) {
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    c.send(json!({"t": "watch", "id": 2, "view": "sessions", "scope": project})).await;
+    c.until(|m| m["t"] == "snapshot" && m["watch"] == 2).await;
+    let created = c.rpc("session.create", json!({"project": project, "prompt": prompt})).await;
+    let (sid, stream) = (created["id"].clone(), created["stream"].as_str().unwrap().to_owned());
+    c.until(|m| session_row_matches(m, |r| r["id"] == sid && r["status"] == "waiting")).await;
+    (project, sid, stream)
+}
+
+/// The titles `session.renamed` events carry in a session's stream, in order.
+async fn renamed_titles(c: &mut Client, stream: &str) -> Vec<(String, String)> {
+    c.send(json!({"t": "sub", "id": 9, "filter": {"stream": stream}, "from": 1})).await;
+    c.until(|m| m["t"] == "live" && m["sub"] == 9).await;
+    c.seen
+        .iter()
+        .filter(|m| m["t"] == "events")
+        .flat_map(|m| m["events"].as_array().unwrap().clone())
+        .filter(|e| e["kind"] == "session.renamed")
+        .map(|e| (e["actor"].as_str().unwrap().to_owned(), e["body"]["title"].as_str().unwrap().to_owned()))
         .collect()
 }
 
@@ -275,6 +308,61 @@ async fn idle_process_is_reaped_and_resumed_on_next_message() {
     app.supervisor.shutdown().await;
 }
 
+#[tokio::test]
+async fn session_rename_over_websocket() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"]);
+
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let (_, sid, stream) = session_in_project(&mut c, &repo, "Fix the login bug").await;
+
+    // The new title is trimmed and arrives as a row patch.
+    c.rpc("session.rename", json!({"session": sid, "title": "  Login rate limits  "})).await;
+    c.until(|m| session_row_matches(m, |r| r["id"] == sid && r["title"] == "Login rate limits")).await;
+
+    let why = rpc_err(&mut c, "session.rename", json!({"session": sid, "title": "   "})).await;
+    assert!(why.contains("empty"), "{why}");
+    let why = rpc_err(&mut c, "session.rename", json!({"session": sid, "title": "x".repeat(201)})).await;
+    assert!(why.contains("longer"), "{why}");
+
+    // The turn ends (the fake agent's request id is "r1"); the name holds.
+    c.rpc("session.answer", json!({"session": sid, "request_id": "r1", "decision": {"behavior": "allow"}})).await;
+    c.until(|m| session_row_matches(m, |r| r["id"] == sid && r["status"] == "idle")).await;
+    let last = c.seen.iter().rev().find(|m| session_row_matches(m, |r| r["id"] == sid)).unwrap().clone();
+    assert_eq!(last["upsert"][0]["title"], "Login rate limits");
+
+    // The rename is in the log, as the person's.
+    assert_eq!(renamed_titles(&mut c, &stream).await, vec![("user".into(), "Login rate limits".into())]);
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn auto_title_names_session_after_first_turn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"]);
+
+    // The fake answers the one-shot titler with a fixed title, so this needs no network.
+    let (app, addr) = boot_with(tmp.path(), Duration::from_secs(600), true).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let (_, sid, stream) = session_in_project(&mut c, &repo, "Fix the login bug").await;
+    assert_eq!(
+        c.seen.iter().rev().find(|m| session_row_matches(m, |r| r["id"] == sid)).unwrap()["upsert"][0]["title"],
+        "Fix the login bug"
+    );
+
+    c.rpc("session.answer", json!({"session": sid, "request_id": "r1", "decision": {"behavior": "allow"}})).await;
+    c.until(|m| session_row_matches(m, |r| r["id"] == sid && r["title"] == "Login rate limits")).await;
+    assert_eq!(renamed_titles(&mut c, &stream).await, vec![("atelier".into(), "Login rate limits".into())]);
+    app.supervisor.shutdown().await;
+}
+
 /// Stands in for `tailscale whois`: trusts exactly the listed addresses.
 struct FakeTailnet(Vec<IpAddr>);
 
@@ -324,6 +412,7 @@ async fn tailnet_peers_and_tokens() {
         tailscale_bin: "false".into(),
         claude_bin: FAKE.into(),
         idle_timeout: Duration::from_secs(600),
+        auto_title: false,
         token: Some("secret".into()),
     };
     std::fs::create_dir_all(&config.home).unwrap();
@@ -358,6 +447,10 @@ async fn tailnet_peers_and_tokens() {
 }
 
 async fn boot(tmp: &Path, idle_timeout: Duration) -> (App, std::net::SocketAddr) {
+    boot_with(tmp, idle_timeout, false).await
+}
+
+async fn boot_with(tmp: &Path, idle_timeout: Duration, auto_title: bool) -> (App, std::net::SocketAddr) {
     let config = Config {
         home: tmp.join("home"),
         listen: "127.0.0.1:0".parse().unwrap(),
@@ -365,6 +458,7 @@ async fn boot(tmp: &Path, idle_timeout: Duration) -> (App, std::net::SocketAddr)
         tailscale_bin: "false".into(),
         claude_bin: FAKE.into(),
         idle_timeout,
+        auto_title,
         token: Some("secret".into()),
     };
     std::fs::create_dir_all(&config.home).unwrap();

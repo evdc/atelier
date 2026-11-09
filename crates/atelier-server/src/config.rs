@@ -22,6 +22,8 @@ pub struct Config {
     /// `ATELIER_IDLE_SECS`, default 600: an agent process whose session has been idle this long is stopped
     /// and resumed on the next message.
     pub idle_timeout: Duration,
+    /// Ask the agent for a title after each session's first turn. `ATELIER_AUTO_TITLE=0` turns it off.
+    pub auto_title: bool,
     /// Shared secret clients present in `hello`. Generated on first run and
     /// stored in `<home>/token`. `None` disables auth (tests only).
     pub token: Option<String>,
@@ -49,6 +51,7 @@ impl Config {
         let listen =
             listen.unwrap_or_else(|| format!("127.0.0.1:{DEFAULT_PORT}")).parse().context("bad listen address")?;
         let claude_bin = std::env::var_os("ATELIER_CLAUDE_BIN").map(PathBuf::from).unwrap_or_else(|| "claude".into());
+        let auto_title = !std::env::var("ATELIER_AUTO_TITLE").is_ok_and(|v| matches!(v.as_str(), "0" | "false" | "no"));
         let listen_tailscale =
             std::env::var("ATELIER_LISTEN_TAILSCALE").is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "yes"));
         let tailscale_bin = crate::tailnet::Tailscale::find_bin();
@@ -63,6 +66,7 @@ impl Config {
             listen_tailscale,
             tailscale_bin,
             claude_bin,
+            auto_title,
             idle_timeout: Duration::from_secs(idle_secs),
             token,
         })

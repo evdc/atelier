@@ -84,7 +84,7 @@ async fn drives_a_process_end_to_end() {
             DriverEvent::Permission(p) => {
                 assert_eq!((p.tool.as_str(), p.input["command"].as_str()), ("Bash", Some("ls")));
                 kinds.push("permission".to_owned());
-                let decision = PermissionDecision::Allow { updated_input: None };
+                let decision = PermissionDecision::Allow { updated_input: None, updated_permissions: None };
                 h.cmds.send(AgentCmd::Answer { request_id: p.request_id, decision }).unwrap();
             }
             DriverEvent::TurnEnded(t) => {
@@ -105,4 +105,36 @@ async fn drives_a_process_end_to_end() {
         kinds,
         ["bound:fake-native-1", "cc.system", "cc.stream_event", "cc.assistant", "permission", "turn", "exited"]
     );
+}
+
+#[test]
+fn allow_forwards_updated_permissions_verbatim() {
+    let suggestion = json!({"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "npm test"}],
+                            "behavior": "allow", "destination": "localSettings"});
+    let line = permission_response(
+        "r1",
+        PermissionDecision::Allow { updated_input: None, updated_permissions: Some(json!([suggestion.clone()])) },
+        Some(json!({"command": "npm test"})),
+    );
+    let v: Value = serde_json::from_str(&line).unwrap();
+    let response = &v["response"]["response"];
+    assert_eq!(response["behavior"], "allow");
+    assert_eq!(response["updatedInput"]["command"], "npm test", "original input echoed when not replaced");
+    assert_eq!(response["updatedPermissions"], json!([suggestion]));
+}
+
+#[test]
+fn allow_without_suggestion_omits_updated_permissions() {
+    let line =
+        permission_response("r1", PermissionDecision::Allow { updated_input: None, updated_permissions: None }, None);
+    let v: Value = serde_json::from_str(&line).unwrap();
+    assert!(v["response"]["response"].get("updatedPermissions").is_none());
+}
+
+#[test]
+fn deny_carries_the_reason_as_message() {
+    let line = permission_response("r1", PermissionDecision::Deny { message: "use cargo test".into() }, None);
+    let v: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["response"]["response"]["behavior"], "deny");
+    assert_eq!(v["response"]["response"]["message"], "use cargo test");
 }

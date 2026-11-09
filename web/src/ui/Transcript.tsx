@@ -29,6 +29,16 @@ export function TranscriptView(props: { live: LiveTranscript; session: Accessor<
   const heights = new Map<string, number>();
   // Indices are always < length; `undefined` only satisfies noUncheckedIndexedAccess.
   const h = (it: Item | undefined) => (it ? (heights.get(it.id) ?? EST[it.k] + GAP) : 0);
+  // Only the newest pending permission takes the ⌘↵ / ⌘⌫ shortcuts. Read through the
+  // permission index, so this doesn't touch every item of a long transcript.
+  const newestAsk = createMemo(() => {
+    let best = -1;
+    for (const i of Object.values(t.perms)) {
+      const it = t.items[i];
+      if (i > best && it?.k === "permission" && it.state === "pending") best = i;
+    }
+    return best < 0 ? null : (t.items[best]?.id ?? null);
+  });
   // Follow new output only while the reader is at the bottom.
   let stick = true;
   const [win, setWin] = createSignal<Win>({ s: 0, e: 0, top: 0, bot: 0 }, { equals: sameWin });
@@ -105,7 +115,7 @@ export function TranscriptView(props: { live: LiveTranscript; session: Accessor<
                 onCleanup(() => ro.unobserve(el));
               }}
             >
-              <ItemView item={item} prev={t.items[win().s + i() - 1]} session={props.session} />
+              <ItemView item={item} prev={t.items[win().s + i() - 1]} session={props.session} newestAsk={newestAsk} />
             </div>
           )}
         </For>
@@ -123,7 +133,12 @@ export function TranscriptView(props: { live: LiveTranscript; session: Accessor<
   );
 }
 
-function ItemView(props: { item: Item; prev: Item | undefined; session: Accessor<SessionRow> }) {
+function ItemView(props: {
+  item: Item;
+  prev: Item | undefined;
+  session: Accessor<SessionRow>;
+  newestAsk: Accessor<string | null>;
+}) {
   const it = props.item;
   return (
     <Switch>
@@ -152,7 +167,9 @@ function ItemView(props: { item: Item; prev: Item | undefined; session: Accessor
         )}
       </Match>
       <Match when={it.k === "tool" && it}>{(tool) => <ToolView tool={tool()} cwd={props.session().workspace.path} />}</Match>
-      <Match when={it.k === "permission" && it}>{(p) => <Ask item={p()} session={props.session} />}</Match>
+      <Match when={it.k === "permission" && it}>
+        {(p) => <Ask item={p()} session={props.session} newest={() => props.newestAsk() === p().id} />}
+      </Match>
       <Match when={it.k === "turn" && it}>
         {(turn) => (
           <div class="turn" classList={{ err: turn().error }}>

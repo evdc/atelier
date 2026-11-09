@@ -4,4 +4,13 @@ export type PermissionDecision = { "behavior": "allow",
 /**
  * Replaces the tool input (e.g. AskUserQuestion answers).
  */
-updated_input?: unknown, } | { "behavior": "deny", message: string, };
+updated_input?: unknown, 
+/**
+ * Permission rules to apply with this allow, verbatim from the request's
+ * `permission_suggestions` ("always allow"). Forwarded as `updatedPermissions`.
+ */
+updated_permissions?: unknown, } | { "behavior": "deny", 
+/**
+ * Shown to the agent as the reason the tool was refused.
+ */
+message: string, };

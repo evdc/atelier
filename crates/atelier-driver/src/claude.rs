@@ -192,21 +192,7 @@ async fn write_stdin(
                 .to_string(),
                 Some(AgentCmd::Answer { request_id, decision }) => {
                     let original = pending.lock().unwrap().remove(&request_id);
-                    let response = match decision {
-                        PermissionDecision::Allow { updated_input } => json!({
-                            "behavior": "allow",
-                            "updatedInput": updated_input.or(original).unwrap_or(json!({})),
-                        }),
-                        PermissionDecision::Deny { message } => json!({
-                            "behavior": "deny",
-                            "message": message,
-                        }),
-                    };
-                    json!({
-                        "type": "control_response",
-                        "response": { "subtype": "success", "request_id": request_id, "response": response },
-                    })
-                    .to_string()
+                    permission_response(&request_id, decision, original)
                 }
                 Some(AgentCmd::Shutdown) | None => break,
             },
@@ -219,6 +205,32 @@ async fn write_stdin(
     stopping.store(true, Ordering::Release);
     drop(stdin);
     let _ = kill.send(());
+}
+
+/// The `control_response` answering a `can_use_tool` request. `original` is the request's
+/// input, echoed back when an allow doesn't replace it.
+fn permission_response(request_id: &str, decision: PermissionDecision, original: Option<Value>) -> String {
+    let response = match decision {
+        PermissionDecision::Allow { updated_input, updated_permissions } => {
+            let mut r = json!({
+                "behavior": "allow",
+                "updatedInput": updated_input.or(original).unwrap_or(json!({})),
+            });
+            if let Some(perms) = updated_permissions {
+                r["updatedPermissions"] = perms;
+            }
+            r
+        }
+        PermissionDecision::Deny { message } => json!({
+            "behavior": "deny",
+            "message": message,
+        }),
+    };
+    json!({
+        "type": "control_response",
+        "response": { "subtype": "success", "request_id": request_id, "response": response },
+    })
+    .to_string()
 }
 
 async fn write_line(stdin: &mut ChildStdin, line: &str) -> std::io::Result<()> {

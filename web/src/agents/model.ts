@@ -24,10 +24,20 @@ export type Item =
       tool: string;
       input: unknown;
       state: "pending" | "allowed" | "denied" | "void";
+      /** The vendor's offered rules ("always allow"), verbatim from the request. */
+      suggestions: PermissionSuggestion[];
     }
   | { k: "turn"; id: string; ts: number; error: boolean; cost: number | null; ms: number | null }
   | { k: "note"; id: string; ts: number; text: string; tone: "quiet" | "warn" };
 // `sub`: set when the item comes from a subagent (the parent's tool_use id).
+
+/** One of Claude Code's `permission_suggestions`; only the fields the UI reads are typed. */
+export interface PermissionSuggestion {
+  type: string;
+  behavior?: string;
+  rules?: { toolName: string; ruleContent?: string }[];
+  destination?: string;
+}
 
 export interface Transcript {
   items: Item[];

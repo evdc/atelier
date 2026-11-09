@@ -1,13 +1,15 @@
 // A permission request or a question from the agent, answered inline.
 
-import { createSignal, For, Match, Show, Switch, type Accessor } from "solid-js";
+import { createEffect, createSignal, For, Match, onCleanup, Show, Switch, type Accessor } from "solid-js";
 import type { PermissionDecision } from "../gen/PermissionDecision";
 import type { SessionRow } from "../gen/SessionRow";
-import type { Item } from "../agents/model";
+import type { Item, PermissionSuggestion } from "../agents/model";
 import { useApp } from "./context";
 import { summarize } from "../agents/tools";
 
 type Perm = Extract<Item, { k: "permission" }>;
+
+const DECLINED = "The user declined this in Atelier.";
 
 interface Question {
   question: string;
@@ -16,11 +18,13 @@ interface Question {
   multiSelect?: boolean;
 }
 
-export function Ask(props: { item: Perm; session: Accessor<SessionRow> }) {
+export function Ask(props: { item: Perm; session: Accessor<SessionRow>; newest: () => boolean }) {
   const { conn } = useApp();
   const p = () => props.item;
   const [error, setError] = createSignal<string | null>(null);
   const [sent, setSent] = createSignal(false);
+  const [denying, setDenying] = createSignal(false);
+  const [reason, setReason] = createSignal("");
 
   async function answer(decision: PermissionDecision) {
     setSent(true);
@@ -34,6 +38,25 @@ export function Ask(props: { item: Perm; session: Accessor<SessionRow> }) {
   }
 
   const questions = () => ((p().input as { questions?: Question[] })?.questions ?? []) as Question[];
+  const rules = () => p().suggestions.filter((s) => s.type === "addRules" && s.behavior === "allow" && s.rules?.length);
+  const deny = (why: string) => answer({ behavior: "deny", message: why.trim() || DECLINED });
+
+  // ⌘↵ allows and ⌘⌫ denies the card the agent is waiting on. Text fields keep their own ⌘ keys.
+  createEffect(() => {
+    if (!props.newest() || p().tool === "AskUserQuestion") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || p().state !== "pending" || sent() || isTextField(e.target)) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        answer({ behavior: "allow" });
+      } else if (e.key === "Backspace") {
+        e.preventDefault();
+        deny(reason());
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    onCleanup(() => document.removeEventListener("keydown", onKey));
+  });
 
   return (
     <Switch>
@@ -55,17 +78,49 @@ export function Ask(props: { item: Perm; session: Accessor<SessionRow> }) {
           </span>
           <pre>{describe(p().tool, p().input)}</pre>
           <div class="acts">
-            <button class="btn dark" disabled={sent()} onClick={() => answer({ behavior: "allow" })}>
+            <button class="btn dark" title="Allow (⌘↵)" disabled={sent()} onClick={() => answer({ behavior: "allow" })}>
               Allow
             </button>
+            <For each={rules()}>
+              {(s) => (
+                <button
+                  class="btn"
+                  disabled={sent()}
+                  onClick={() => answer({ behavior: "allow", updated_permissions: [s] })}
+                >
+                  Always allow <code>{ruleLabel(s)}</code> here
+                </button>
+              )}
+            </For>
             <button
               class="btn"
+              title="Deny (⌘⌫)"
               disabled={sent()}
-              onClick={() => answer({ behavior: "deny", message: "The user declined this in Atelier." })}
+              onClick={() => (denying() ? deny(reason()) : setDenying(true))}
             >
               Deny
             </button>
           </div>
+          <Show when={denying()}>
+            <input
+              class="field reason"
+              placeholder="Why not? The agent reads this. Esc cancels."
+              value={reason()}
+              disabled={sent()}
+              ref={(el) => queueMicrotask(() => el.focus())}
+              onInput={(e) => setReason(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  deny(reason());
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setDenying(false);
+                  setReason("");
+                }
+              }}
+            />
+          </Show>
           <Show when={error()}>
             <p class="err">{error()}</p>
           </Show>
@@ -144,6 +199,14 @@ function Questions(props: {
       </Show>
     </div>
   );
+}
+
+function ruleLabel(s: PermissionSuggestion): string {
+  return (s.rules ?? []).map((r) => r.ruleContent ?? r.toolName).join(", ");
+}
+
+function isTextField(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 }
 
 function describe(tool: string, input: unknown): string {

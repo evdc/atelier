@@ -51,13 +51,17 @@ ios-device:      ## Build (release), install and launch on a connected iPhone; n
 gen:             ## Regenerate TypeScript bindings from the Rust protocol types
 	rm -rf web/src/gen && cargo test -q -p atelier-core -p atelier-proto export_bindings >/dev/null
 
+# Cargo packages `test` and `check` cover. CI on Linux narrows this to the server crates
+# (`make check CARGO_SCOPE="--workspace --exclude atelier-app"`): the app needs webkit2gtk, which only macOS has.
+CARGO_SCOPE ?= --workspace
+
 test:            ## All tests
-	cargo test --workspace
+	cargo test $(CARGO_SCOPE)
 	pnpm -C web test
 
 check:           ## Lint + typecheck everything (run before handing work back)
 	cargo fmt --all --check
-	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy $(CARGO_SCOPE) --all-targets -- -D warnings
 	$(MAKE) gen && git diff --exit-code -- web/src/gen || (echo "web/src/gen is stale: commit the regenerated bindings"; exit 1)
 	pnpm -C web check
 

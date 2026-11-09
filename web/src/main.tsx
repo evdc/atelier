@@ -15,4 +15,8 @@ import { Unconfigured } from "./ui/Settings";
 
 const root = document.getElementById("root")!;
 const cfg = serverConfig();
+const fixture = import.meta.env.DEV ? Number(new URLSearchParams(location.search).get("fixture")) : 0;
+if (fixture) {
+  void import("./ui/Fixture").then(({ Fixture }) => render(() => <Fixture n={fixture} />, root));
+} else
 render(() => (cfg ? <App conn={new Conn(cfg)} /> : <Unconfigured />), root);

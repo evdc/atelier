@@ -27,6 +27,9 @@ export function TranscriptView(props: { live: LiveTranscript; session: Accessor<
       if (stick) pane.scrollTop = pane.scrollHeight;
     });
     ro.observe(pane);
+    // Off-screen items use estimated heights (content-visibility); as they
+    // render and report real ones the content height shifts, so re-stick.
+    ro.observe(pane.firstElementChild!);
     onCleanup(() => ro.disconnect());
   });
 

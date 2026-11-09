@@ -433,6 +433,11 @@
   align-content: start;
   max-width: calc(var(--measure) + 40px);
 }
+/* Items off-screen skip layout and paint; `auto` remembers each real height once seen. */
+.tx > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 48px;
+}
 .msg {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr);

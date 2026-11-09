@@ -1,5 +1,5 @@
 # Atelier dev tasks. `make help` lists them.
-.PHONY: help dev server web app ios-dev ios-build ios-run gen test check fmt
+.PHONY: help dev server web app ios-dev ios-build ios-run ios-device gen test check fmt
 
 HOME_DEV ?= $(HOME)/.atelier-dev
 
@@ -32,6 +32,18 @@ ios-run: ios-build ## Build, install and launch the iOS app in the simulator ($(
 	open -a Simulator
 	xcrun simctl install "$(IOS_SIM)" $(IOS_APP)
 	xcrun simctl launch "$(IOS_SIM)" sh.atelier.app
+
+IOS_DEVICE ?=
+IOS_IPA := app/gen/apple/build/arm64/Atelier.ipa
+
+# `cargo tauri ios run` can't export to a device (tauri-cli 2.12 loses its temporary exportOptions plist), so build
+# the IPA with `ios build` and install it with devicectl.
+ios-device:      ## Build (release), install and launch on a connected iPhone; needs APPLE_DEVELOPMENT_TEAM, IOS_DEVICE (README)
+	@test -n "$$APPLE_DEVELOPMENT_TEAM" || { echo "set APPLE_DEVELOPMENT_TEAM (README: Run on your iPhone)"; exit 1; }
+	@test -n "$(IOS_DEVICE)" || { echo "set IOS_DEVICE to a name from: xcrun devicectl list devices"; exit 1; }
+	cd app && cargo tauri ios build --target aarch64 --ci
+	xcrun devicectl device install app --device "$(IOS_DEVICE)" $(IOS_IPA)
+	xcrun devicectl device process launch --device "$(IOS_DEVICE)" sh.atelier.app
 
 gen:             ## Regenerate TypeScript bindings from the Rust protocol types
 	rm -rf web/src/gen && cargo test -q -p atelier-core -p atelier-proto export_bindings >/dev/null

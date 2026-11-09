@@ -2,11 +2,10 @@
 //! result (usually an id). State reaches clients through subs and watches,
 //! never through RPC results.
 //!
-//! One deliberate exception: `session.changes` and `session.diff` return a
-//! computed snapshot of the filesystem (git's view of a worktree). That's a
-//! read, like `cat`, not state of the system; nothing is logged for it.
-
-use std::path::PathBuf;
+//! Deliberate exceptions: `session.changes`, `session.diff`, `fs.list` and
+//! `fs.suggest` return a computed snapshot of the filesystem (git's view of a
+//! worktree, a directory listing). That's a read, like `cat`, not state of the
+//! system; nothing is logged for it.
 
 use anyhow::{Context, Result, bail};
 use atelier_core::domain::{
@@ -16,7 +15,7 @@ use atelier_core::{Actor, NewEvent, SessionId, stream};
 use atelier_proto::{Archived, Call, ProjectRow, SessionRow};
 use serde_json::{Value, json};
 
-use crate::{App, views, workspace};
+use crate::{App, browse, views, workspace};
 
 pub async fn handle(app: &App, call: Call) -> Result<Value> {
     match call {
@@ -104,11 +103,13 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             let s = session_row(app, &session).await?;
             Ok(json!({ "patch": workspace::diff(&s.workspace, &path).await? }))
         }
+        Call::FsList { path, hidden } => Ok(serde_json::to_value(browse::list(path, hidden.unwrap_or(false)).await?)?),
+        Call::FsSuggest {} => Ok(serde_json::to_value(browse::suggest().await?)?),
     }
 }
 
 async fn project_add(app: &App, path: String, name: Option<String>) -> Result<Value> {
-    let path = expand_home(&path);
+    let path = browse::expand_home(&path);
     let path = tokio::fs::canonicalize(&path).await.with_context(|| format!("{} doesn't exist", path.display()))?;
     if !path.is_dir() {
         bail!("{} is not a directory", path.display());
@@ -156,13 +157,6 @@ fn title_from(prompt: &str) -> String {
     match cut.rfind(' ') {
         Some(i) if i > 30 => format!("{}…", &cut[..i]),
         _ => format!("{cut}…"),
-    }
-}
-
-fn expand_home(p: &str) -> PathBuf {
-    match p.strip_prefix("~/") {
-        Some(rest) => dirs::home_dir().map(|h| h.join(rest)).unwrap_or_else(|| p.into()),
-        None => p.into(),
     }
 }
 

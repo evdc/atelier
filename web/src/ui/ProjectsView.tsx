@@ -1,6 +1,7 @@
 import { createSignal, For, Show } from "solid-js";
 import { go, href } from "../lib/router";
 import { ago } from "../lib/time";
+import { DirPicker } from "./DirPicker";
 import { useApp } from "./context";
 
 export function ProjectsView() {
@@ -11,21 +12,27 @@ export function ProjectsView() {
   const [path, setPath] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [browsing, setBrowsing] = createSignal(false);
 
-  async function add(e: SubmitEvent) {
-    e.preventDefault();
+  async function addPath() {
     if (!path().trim()) return;
     setBusy(true);
     setError(null);
     try {
       const res = (await conn.call("project.add", { path: path().trim() })) as { id: string };
       setPath("");
+      setBrowsing(false);
       go({ name: "sessions", project: res.id });
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+
+  function add(e: SubmitEvent) {
+    e.preventDefault();
+    void addPath();
   }
 
   return (
@@ -112,10 +119,26 @@ export function ProjectsView() {
               spellcheck={false}
               autocapitalize="off"
             />
+            <button
+              type="button"
+              class="btn quiet"
+              aria-expanded={browsing()}
+              onClick={() => setBrowsing(!browsing())}
+            >
+              Browse…
+            </button>
             <button class="btn dark" disabled={busy() || !path().trim()}>
               Add
             </button>
           </form>
+          <Show when={browsing()}>
+            <DirPicker
+              start={path().trim() || undefined}
+              onPick={setPath}
+              onAdd={() => void addPath()}
+              busy={busy()}
+            />
+          </Show>
           <Show when={error()}>
             <p class="err">{error()}</p>
           </Show>

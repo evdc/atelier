@@ -20,13 +20,25 @@ pub(crate) fn events(c: &Connection, filter: &StreamFilter, from: Seq, limit: us
             ))?;
             q.query_map(params![s, from, limit], row)?.collect::<rusqlite::Result<Vec<_>>>()?
         }
-        StreamFilter::Prefix(p) => {
-            let mut q = c.prepare_cached(&format!(
-                "SELECT {COLS} FROM events WHERE stream >= ?1 AND stream < ?2 AND seq >= ?3
-                 ORDER BY seq LIMIT ?4"
-            ))?;
-            q.query_map(params![p, prefix_end(p), from, limit], row)?.collect::<rusqlite::Result<Vec<_>>>()?
-        }
+        StreamFilter::Prefix(p) => match crate::project_prefix(p) {
+            // Answered by the (project, seq) index: no range scan over the
+            // project's streams followed by a sort on every page. The hint pins
+            // that plan rather than leaving it to planner statistics.
+            Some(project) => {
+                let mut q = c.prepare_cached(&format!(
+                    "SELECT {COLS} FROM events INDEXED BY events_by_project
+                     WHERE project = ?1 AND seq >= ?2 ORDER BY seq LIMIT ?3"
+                ))?;
+                q.query_map(params![project, from, limit], row)?.collect::<rusqlite::Result<Vec<_>>>()?
+            }
+            None => {
+                let mut q = c.prepare_cached(&format!(
+                    "SELECT {COLS} FROM events WHERE stream >= ?1 AND stream < ?2 AND seq >= ?3
+                     ORDER BY seq LIMIT ?4"
+                ))?;
+                q.query_map(params![p, prefix_end(p), from, limit], row)?.collect::<rusqlite::Result<Vec<_>>>()?
+            }
+        },
     };
     Ok(rows.into_iter().map(Arc::new).collect())
 }

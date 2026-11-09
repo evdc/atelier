@@ -27,7 +27,8 @@ export function TranscriptView(props: { live: LiveTranscript; session: Accessor<
   const { t, streaming, ready } = props.live;
   let pane!: HTMLDivElement;
   const heights = new Map<string, number>();
-  const h = (it: Item) => heights.get(it.id) ?? EST[it.k] + GAP;
+  // Indices are always < length; `undefined` only satisfies noUncheckedIndexedAccess.
+  const h = (it: Item | undefined) => (it ? (heights.get(it.id) ?? EST[it.k] + GAP) : 0);
   // Follow new output only while the reader is at the bottom.
   let stick = true;
   const [win, setWin] = createSignal<Win>({ s: 0, e: 0, top: 0, bot: 0 }, { equals: sameWin });
@@ -71,7 +72,7 @@ export function TranscriptView(props: { live: LiveTranscript; session: Accessor<
       const el = en.target as HTMLElement;
       const id = el.dataset.id;
       if (id === undefined) continue;
-      const next = en.borderBoxSize[0].blockSize + GAP;
+      const next = (en.borderBoxSize[0]?.blockSize ?? el.offsetHeight) + GAP;
       const prev = heights.get(id) ?? Number(el.dataset.est);
       heights.set(id, next);
       // An item above the viewport changed height: hold the reader's place.

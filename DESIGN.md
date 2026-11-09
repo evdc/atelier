@@ -182,6 +182,7 @@ and M2 work is ticketed in `.atelier/tickets/`.
 | M2 | **Remote**: launchd daemon, Tailscale bind, pairing, reconnect/resume; iOS build | parity with CC + remote-control, from phone |
 | M3 | Codex driver (`codex app-server`) | |
 | M4 | `.atelier/` files, `at://` addresses, link index, backlinks, tickets/notes, MCP `ask`/`handoff` | mockup steps 1–2 |
+| M4+ | Automations (§10): signals, approval, runner, editor, MCP catalog | dragging a ticket to Doing starts a session on it |
 | M5 | Checkpoints per file-changing turn, forks (native via `--resume-session-at`), history view | step 6 |
 | M6 | Since-you-left digest, handoff notes | step 5 |
 | M7 | Pages, peek, drift marks, live overlay | steps 3–4 |
@@ -189,7 +190,279 @@ and M2 work is ticketed in `.atelier/tickets/`.
 | M9 | `spawn`, subagent tree, budgets | step 7 |
 | — | Own harness: context as a projection of the log; RLM tools | |
 
-## 10. Open questions
+## 10. Automations **[proposed]**
+
+"When *x* happens, do *y*": e.g. *when a ticket is dragged into Doing, start a session on it*. Humans and agents
+can both create, read and change automations.
+
+### 10.1 The idea in one paragraph
+
+Atelier already has the two things automations need. **Triggers** are events in the log (or state changes derived
+from it). **Actions** are RPC `Call`s, the same commands the UI sends. An automation is a small authored file that
+joins the two: *on* this trigger, *if* this guard holds, *do* these calls. It runs with its own actor
+(`automation:<id>`), and every event it causes carries `cause` back to the event that triggered it. Nothing new
+holds state. Definitions are files, runs are events, and "what's active" is a projection.
+
+Principles, following §1:
+
+- **One vocabulary.** What a human can do in the UI, an automation can do as an action, and an agent can do as an
+  MCP tool, because all three are the same `Call` enum. Adding a `Call` makes it available to all three. Nothing is
+  automation-only.
+- **Not a programming language.** One trigger, a guard made of AND-ed field tests, and a list of calls whose
+  parameters can be templated. There are no loops, no `else`, and no scripting. When the logic gets interesting,
+  the action is "start an agent with this prompt": the agent handles the complex cases.
+- **Visible causality.** Every session, message or ticket move an automation makes can show why it happened:
+  *started by "Work on Doing tickets" because you moved AT-021 to Doing at 14:02*.
+- **Nothing runs that a person hasn't approved.** Agents can write automations, but only the user can arm them
+  (see §10.4).
+
+### 10.2 Definitions are files
+
+Automations are authored, so per §2 they live in git: `.atelier/automations/<slug>.md`. They use the same format
+as tickets: YAML front matter for the rule and a markdown body that serves as the prompt template. Agents edit
+them like any other file. Humans edit them in a form that writes the same file (§10.6). They show up in PRs, so
+reviewers see them like any other change.
+
+```markdown
+---
+name: Work on tickets moved to Doing
+on:
+  change: ticket.status        # a signal (§10.3)
+  to: doing
+if:
+  subject.assignee: agent      # AND of field tests; optional
+do:
+  - session.create:            # any Call; params are templates
+      project: "{{project.id}}"
+      title: "{{subject.id}}: {{subject.title}}"
+      prompt: "{{body}}"       # the markdown below, rendered
+  - ticket.update:
+      ticket: "{{subject.id}}"
+      session: "{{steps.0.id}}" # results of earlier steps
+limit: 6/hour
+---
+
+Work on {{subject.id}}. The ticket is `{{subject.path}}`; read it and the files it lists, then follow CLAUDE.md.
+When you're done, set its status to `review`.
+```
+
+Only the project's own checkout is live (`<project.path>/.atelier/automations/`). An agent that edits its
+worktree's copy has made a proposal. It takes effect when merged, and only after approval.
+
+**Templates** support `{{dotted.path}}` lookups only. A value that is a single placeholder keeps its type (number,
+object). These names are in scope:
+
+| name | what |
+|---|---|
+| `event` | the triggering event (`kind`, `actor`, `seq`, `body.*`) |
+| `subject` | the view row the trigger concerns (the ticket or session row), read after the change |
+| `project` | the project row |
+| `steps.<i>` | the result of step *i* (e.g. the `{ id }` that `session.create` returns) |
+| `body` | the file's markdown body, itself rendered as a template |
+
+**Guards** (`if`) map paths to tests, and every test must pass:
+- a literal: equality;
+- `{in: [...]}`, `{not: x}`, `{glob: "..."}` and `{exists: bool}`.
+
+There is no OR; write two automations instead. Templates and guards together come to about 150 lines of Rust with
+no dependency.
+
+### 10.3 Triggers: events and signals
+
+| `on:` | fires when | examples |
+|---|---|---|
+| `event: <kind>` | an event of that kind is appended (body fields testable in `if`) | `permission.requested`, `turn.ended`, `user.message`, `cc.result` |
+| `change: <view>.<field>` (+ `from`/`to`) | a projection reports that field of a row changing | `ticket.status → doing`, `session.status → waiting`, `session.archived → true` |
+| `manual` (+ `inputs`) | someone runs it: a button, the ⌘K palette, or an agent's `automation.run` tool | "Triage the inbox", "Spin up a review agent on this branch" |
+
+**Why signals exist.** Most of what people care about is a *transition*: a ticket entering a column, a session
+starting to wait. No single event says that. A ticket's status comes from a file edit, and a session's status comes
+from process and turn events. So projections, which already report `Change { view, key, scope }`, may also report
+a **signal**: `{ name: "ticket.status", key, scope, from, to }` for the fields they choose to expose. A projection
+computes signals in `apply`, which keeps them deterministic. Projections later in `views::projections()` receive the
+signals of earlier ones. The automations projection runs last.
+
+Concretely, dragging a ticket works like this:
+1. The UI drag sends `ticket.update { status }`.
+2. That call rewrites the ticket's front matter.
+3. The watcher appends `file.changed`.
+4. The tickets projection folds the file and emits the `ticket.status` signal.
+
+An agent that edits the file directly produces the same signal, and so does a `git pull` that changes it. What
+moved the ticket doesn't matter, only that it moved.
+
+These never trigger anything:
+- **Ephemera** (token deltas, status): they aren't in the log.
+- **Raw vendor events** (`cc.*`): they're allowed in `event:` triggers but discouraged. Prefer a signal from a
+  projection, which survives a change of vendor.
+
+Later, external sources (GitHub webhooks, CI) can append their payloads verbatim as `ext.github.*` (rule 2).
+Triggering on them then needs no new mechanism.
+
+### 10.4 Approval: agents propose, people arm
+
+An automation runs only if the user has approved **its exact contents**, as with `direnv allow`:
+
+- `automation.approved { path, hash }` is appended only by a user client.
+  - Saving from the UI's editor appends it automatically.
+  - Nothing an agent does (a file write, or MCP) can append it.
+- Any change from a source other than the UI disarms it until someone reviews it: an agent's edit, a `git pull`,
+  a teammate's commit. The UI shows it in red ("changed — review to arm") with a diff against the approved version.
+- Pausing is personal and short-lived, so it's an event (`automation.paused` / `automation.resumed`) rather than a
+  file edit. A file edit would churn git.
+
+This is what makes agent-written automations safe without a separate permission system. An agent can draft "when
+CI fails on my branch, wake me up with the log", and the person sees exactly what will run before it ever does.
+Sessions an automation starts still follow the normal permission mode, and their prompts still reach the inbox.
+
+### 10.5 Engine
+
+Matching and executing are split along the line the codebase already draws: pure work goes in a projection, IO goes
+in a supervisor.
+
+**`automations` projection** (pure, runs in the append transaction):
+- Folds two kinds of input:
+  - `file.changed` events under `.atelier/automations/`, parsed into `automations(id, path, def, hash,
+    approved_hash, paused, error)`;
+  - `automation.*` events.
+- For every event and signal it checks the armed automations. In memory it indexes them by trigger kind or signal
+  name, so an event that no automation names costs one hash lookup.
+- A match that passes its guard and `limit` inserts a row in `runs(id, automation, trigger_seq, state)` with
+  `state = pending`. The id is `<trigger_seq>:<automation>`.
+- Matching is a function of the log, so it is exactly-once: a crash can't lose a trigger, and a rebuild can't invent
+  one.
+- Rate limits count earlier `runs` rows by their trigger events' `ts`, never the clock.
+
+**Runner** (IO, inside `atelier-server`, alongside the supervisor):
+- Watches `runs` for rows with `state = pending`.
+- For each step it does three things in order:
+  1. appends `automation.step.started { run, i, call }` (the call with its templates rendered);
+  2. runs the call through the same `rpc::handle`, with `Actor::Automation(id)` and `cause = trigger_seq`;
+  3. appends `automation.step.finished { run, i, result | error }`.
+- An error stops the run. The run's last event is `automation.finished { run, ok }`.
+- Required refactor: `rpc::handle` takes `(actor, cause)` instead of hard-coding `Actor::User`. Agents' MCP calls
+  then use the same path with `Actor::Agent`.
+
+**Delivery is at-most-once.** On restart, a step that has `started` but no `finished` is marked `interrupted` and
+the run fails visibly, in red. It is not retried. Retrying an action like starting an agent is worse than asking.
+
+After a rebuild (a projection version bump), pending runs whose trigger is older than the rebuild point are
+appended as `automation.skipped`. Changing the fold logic must never replay last month's triggers.
+
+**Loops.** Automations may trigger other automations; that chaining is what makes them composable. Two limits
+apply, both computed from the `cause` chain:
+- A run whose cause chain already contains the same automation does not start.
+- A chain stops at depth 8.
+
+The per-automation `limit` (default `20/hour`) bounds the rest. A tripped limit appends
+`automation.limited { automation, trigger_seq }` once per window. It shows in red; it is not dropped silently.
+
+New event kinds (stream `p/<project>`; run events on `p/<project>/a/<automation>`): `file.changed` (from the
+watcher, M4), `automation.approved`, `.paused`, `.resumed`, `.step.started`, `.step.finished`, `.finished`,
+`.skipped`, `.limited`. New calls: `automation.approve`, `.pause`, `.resume`, `.run { automation, inputs }`,
+`.test`, `.save { path, content }` (a user-only file write that approves).
+
+### 10.6 How humans see it
+
+The **Automations** view is per project: one row per automation, read as a sentence.
+
+```
+ Automations — atelier                                               + New
+ ─────────────────────────────────────────────────────────────────────────
+ ● Work on tickets moved to Doing                          14 runs · 2h ago
+   when a ticket's status becomes doing, if assignee is agent
+   → start a session · update the ticket
+ ● Review when a session goes idle with changes             3 runs · today
+ ○ Nightly dependency check                     paused · by you, yesterday
+ ● Allow `npm test` in automation-started sessions   changed by agent:7f3a
+   review to arm  ·  diff                                     ← red: needs you
+```
+
+- Dot colours follow the tokens:
+  - green: armed and healthy;
+  - blue: a run in flight;
+  - red: needs review, failing, or limited;
+  - hollow: paused.
+- The **editor** is a form over the file, with the same three parts in the same order: *When* (trigger picker built
+  from the catalog, §10.7), *If* (field tests), *Do* (a list of calls with templated fields; for `session.create`
+  the prompt is the markdown body). "Edit as text" shows the raw file, and the two stay in sync because the file is
+  the model.
+- **Test** runs the matcher over this project's last 7 days of log and lists what *would* have fired, with every
+  call rendered, without running anything (`automation.test`). It's the cheapest way to trust a rule, for a person
+  or an agent.
+- **Run history** comes from `automation.*` events. Each run links to its trigger event and to the events it
+  caused: the session it started, the ticket it moved.
+- **Creating in context** is where most automations should come from:
+  - a board column header's menu: "When a ticket enters *Doing*…" opens the editor with the trigger filled in;
+  - any event or card in a transcript: "Automate this…" (e.g. on a permission card, "always answer like this when
+    …").
+- **Provenance** shows on everything an automation touched: one quiet line in gold under the session header,
+  *started by "Work on tickets moved to Doing" · AT-021 → Doing by you*.
+
+### 10.7 How agents see it
+
+Agents use the planned Atelier MCP server (§4, M4). It exposes the same surface:
+
+| tool | what |
+|---|---|
+| `atelier.describe` | the catalog: every event kind, signal and `Call`, with fields and doc comments, generated from the Rust types. The UI's trigger and action pickers read the same catalog. |
+| `events.query { stream?, kinds?, since? }` / `views.read { view, scope? }` | read the log and views. Results are bounded and paginated, never the whole log. |
+| one tool per `Call` | e.g. `session.create`, `ticket.update`. Each `Call` declares whether agents may use it; `automation.approve`, `.save`, `.resume` and `project.remove` are user-only. |
+| `automation.test { path \| content }` | dry-run, as in the UI |
+| `automation.run { automation, inputs }` | run a `manual` automation (it still has to be armed) |
+
+Agents need no `automation.create`. Writing `.atelier/automations/x.md` is how they create one, and the result
+lands in the person's "review to arm" list. Agents already know how to edit files, the change shows in the
+session's diff, and nothing is hidden in the database.
+
+The catalog is generated, not written by hand. Doc comments on `domain.rs` bodies and `Call` variants are the
+documentation, extracted at build time like the ts-rs bindings (`make gen`). See the open question in §11 on the
+schema tool.
+
+### 10.8 Examples it should handle
+
+| when | if | do |
+|---|---|---|
+| `ticket.status → doing` | assignee is agent | `session.create` with the ticket as prompt; `ticket.update { session }` |
+| `session.status → idle` | `subject.origin.automation` is the one above | `session.send` "Run `make check`; if green, set the ticket to review" |
+| `session.archived → true` | session has a ticket | `ticket.update { status: done }` |
+| `ticket.status → review` | — | `session.create` "Review the diff on `{{subject.branch}}` against the ticket's acceptance list" |
+| `permission.requested` | `event.body.tool: Bash`, input matches `{glob: "npm test*"}`, session started by an automation | `session.answer allow` (an auto-approver. It must be armed like any other, and its provenance shows on the answered card.) |
+| `manual` with input `branch` | — | start three sessions with different approaches to the same prompt (fan-out, before M9's `spawn`) |
+
+### 10.9 Not yet
+
+- **Time.** Schedules ("nightly") and delays ("waiting for more than 10 min") need a clock, and projections must
+  not read one. The plan is a timer task that appends `timer.fired { automation, at }` when due. The trigger is
+  then an ordinary event and the log stays complete.
+  - A delay is a run that waits for its `timer.fired`, then re-checks its guard.
+  - Build it after the event and signal triggers have proven themselves.
+- **Waiting on a later event.** Multi-step workflows ("start an agent; when it's done, run tests; if they fail,
+  tell it") are written today as chained automations keyed on provenance (row 2 above). An `await` step that
+  parks a run until a matching signal arrives would make them one file. Add it only if chaining proves clumsy.
+- **Branching or expressions** beyond guards. When a rule needs them, start an agent with a prompt instead.
+
+### 10.10 Sequencing
+
+Depends on M4: tickets as files, the `.atelier/` watcher (`file.changed`), the tickets projection and board, and
+the MCP server. Suggested tickets, in order:
+1. Signals from projections: `ticket.status`, `session.status`, `session.archived`, plus the writer change that
+   passes signals to later projections.
+2. `rpc::handle(actor, cause)`, and `Actor::Automation`.
+3. The automations projection: parse, approve or pause, match, the `runs` table, limits and loop guard. Test it the
+   way `views/*` are tested: append events, assert rows.
+4. The runner, including at-most-once handling and the rebuild skip. Add an e2e test against the fake CLI: move a
+   ticket, a session starts, its `cause` chain reaches the move.
+5. The catalog and `automation.test`.
+6. The UI: the list, the form editor, the run history, in-context creation and provenance lines.
+7. MCP exposure (with M4's MCP server).
+
+## 11. Open questions
 
 - Client-side event cache (IndexedDB) for instant cold start on the phone — measure first (AT-015).
 - When to introduce Atelier's own agent loop (context as a projection of the log) — after M3.
+- Automations (§10):
+  - Catalog schemas: should we use `schemars` (one dependency, JSON Schema the MCP tools need anyway), or a
+    hand-rolled walk over ts-rs output? Leaning towards `schemars`.
+  - Is the board's set of columns per project (`.atelier/board.toml`) or simply the distinct ticket statuses?
+  - Name: "automations" is the plain word. Keep "workflow" for the multi-step `await` form, if we ever build it.

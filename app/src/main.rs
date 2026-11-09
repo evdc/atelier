@@ -4,17 +4,20 @@
 //!    agents keep running after this window closes.
 //! 2. Open the web UI with the server's address and token injected.
 //!
-//! The UI talks to the server over WebSocket exactly like the phone does;
-//! there are no Tauri commands.
+//! The UI talks to the server over WebSocket exactly like the phone does. The
+//! single Tauri command, `open_path`, exists because "open this in my
+//! terminal/editor/Finder" must run on the client machine.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod open;
 mod server;
 
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 fn main() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![open::open_path])
         .setup(|app| {
             let target = server::ensure_running()?;
             let init = format!("window.__ATELIER__ = {};", serde_json::to_string(&target)?);

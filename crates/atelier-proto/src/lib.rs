@@ -113,8 +113,56 @@ pub enum Call {
     /// Stop the agent process. The session stays and can be resumed.
     #[serde(rename = "session.stop")]
     SessionStop { session: SessionId },
+    /// Archive a session and, when it's safe, remove its worktree and branch.
+    /// Result: [`Archived`].
     #[serde(rename = "session.archive")]
     SessionArchive { session: SessionId },
+    /// What the session changed in its workspace. Result: [`Changes`].
+    #[serde(rename = "session.changes")]
+    SessionChanges { session: SessionId },
+    /// The unified diff of one changed file. Result: `{ patch }`.
+    #[serde(rename = "session.diff")]
+    SessionDiff { session: SessionId, path: String },
+}
+
+/// Result of `session.archive`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Archived {
+    /// The worktree and branch were deleted.
+    pub removed: bool,
+    /// Why they were kept, when they were.
+    #[serde(default)]
+    #[ts(optional)]
+    pub kept: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeStatus {
+    Added,
+    Modified,
+    Deleted,
+    /// Not tracked by git yet.
+    Untracked,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FileChange {
+    pub path: String,
+    pub status: ChangeStatus,
+    pub added: u32,
+    pub removed: u32,
+}
+
+/// Result of `session.changes`: a snapshot of the workspace against its base.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Changes {
+    pub base: String,
+    pub files: Vec<FileChange>,
 }
 
 // ─── server → client ────────────────────────────────────────────────────────

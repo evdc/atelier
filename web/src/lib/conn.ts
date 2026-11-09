@@ -11,6 +11,7 @@ import type { Event } from "../gen/Event";
 import type { ServerMsg } from "../gen/ServerMsg";
 import type { StreamFilter } from "../gen/StreamFilter";
 import type { ViewName } from "../gen/ViewName";
+import { savedServer } from "./server";
 
 export const PROTOCOL = 1;
 
@@ -18,7 +19,8 @@ export type ConnState = "connecting" | "open" | "offline" | "rejected";
 
 export interface ServerConfig {
   url: string;
-  token: string;
+  /** Not needed on the server's tailnet address from one of its owner's devices. */
+  token?: string;
 }
 
 export interface SubHandler {
@@ -121,7 +123,7 @@ export class Conn {
     const ws = new WebSocket(this.cfg.url);
     this.ws = ws;
     ws.onopen = () => {
-      ws.send(JSON.stringify({ t: "hello", protocol: PROTOCOL, client: navigator.userAgent, token: this.cfg.token } satisfies ClientMsg));
+      ws.send(JSON.stringify({ t: "hello", protocol: PROTOCOL, client: navigator.userAgent, token: this.cfg.token || undefined } satisfies ClientMsg));
     };
     ws.onmessage = (e) => batch(() => this.receive(JSON.parse(e.data as string) as ServerMsg));
     ws.onclose = () => {
@@ -204,15 +206,14 @@ declare global {
   }
 }
 
-/** Where to connect: host-injected, then dev-server-injected, then saved. */
+/** Where to connect: a saved override, then host-injected, then
+ *  dev-server-injected, then saved (Settings writes the saved choice). */
 export function serverConfig(): ServerConfig | null {
-  if (window.__ATELIER__) return window.__ATELIER__;
-  if (__ATELIER_DEV__?.token) return __ATELIER_DEV__;
-  try {
-    const saved = localStorage.getItem("atelier.server");
-    if (saved) return JSON.parse(saved) as ServerConfig;
-  } catch {
-    // storage unavailable
-  }
-  return null;
+  const saved = savedServer();
+  return saved?.override ? saved : (hostServer() ?? saved);
+}
+
+/** The server the host (desktop app, dev server) provides, if any. */
+export function hostServer(): ServerConfig | null {
+  return window.__ATELIER__ ?? (__ATELIER_DEV__?.token ? __ATELIER_DEV__ : null);
 }

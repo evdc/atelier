@@ -1,31 +1,40 @@
-import { Show } from "solid-js";
+import { createEffect, createSignal, on, onCleanup, Show } from "solid-js";
 import type { LimitWindow } from "../gen/LimitWindow";
 import { resetsAt } from "../lib/time";
 import { useApp } from "./context";
+import { connLabel, Settings } from "./Settings";
 
 /** Utilization from which a limit turns red: it needs attention, not a glance. */
 const NEAR_LIMIT = 0.8;
 
-/** The one bar across the bottom of the app: subscription limits, connection. */
+/** The one bar across the bottom of the app: subscription limits, connection.
+ *  The connection opens the server settings, which also open by themselves
+ *  when the server refuses us: nothing else works until that is fixed. */
 export function Footer() {
   const { conn, usage } = useApp();
   const limits = () => usage.get("global");
-
-  const connLabel = () =>
-    ({ open: "Connected", connecting: "Connecting…", offline: "Reconnecting…", rejected: conn.error() ?? "Rejected" })[
-      conn.state()
-    ];
+  const [settings, setSettings] = createSignal(false);
+  createEffect(on(conn.state, (s) => s === "rejected" && setSettings(true)));
+  const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSettings(false);
+  document.addEventListener("keydown", onKey);
+  onCleanup(() => document.removeEventListener("keydown", onKey));
 
   return (
-    <footer class="foot" title={connLabel()}>
+    <footer class="foot" title={connLabel(conn)}>
       <div class="limits">
         <Limit label="5h" w={limits()?.five_hour ?? null} />
         <Limit label="7d" w={limits()?.seven_day ?? null} />
       </div>
-      <div class="conn">
+      <button type="button" class="conn" onClick={() => setSettings((v) => !v)} aria-expanded={settings()}>
         <i class={`conn-dot ${conn.state()}`} />
-        <span>{connLabel()}</span>
-      </div>
+        <span>{connLabel(conn)}</span>
+      </button>
+      <Show when={settings()}>
+        <div class="sheet-back" onClick={() => setSettings(false)} />
+        <div class="sheet" role="dialog" aria-label="Server settings">
+          <Settings conn={conn} onClose={() => setSettings(false)} />
+        </div>
+      </Show>
     </footer>
   );
 }

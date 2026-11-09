@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged by the Tauri CLI into gen/apple/atelier-app_iOS/Info.plist on every iOS build. -->
+<plist version="1.0">
+<dict>
+	<!-- The phone talks to atelierd over cleartext ws:// on a tailnet IP (100.x.y.z); WireGuard already encrypts
+	     it, and the server has no TLS. Tried narrower keys first: NSAllowsLocalNetworking doesn't cover the
+	     100.64/10 CGNAT range ("ATS requires TLS", NSURLErrorDomain -1022), and NSExceptionDomains can't name
+	     IP addresses. So relax ATS for the webview only; the app makes no native network requests. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

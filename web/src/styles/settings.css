@@ -1,0 +1,68 @@
+/* Server settings: a plain form, in a sheet over the app or on the empty page. */
+.settings {
+  display: grid;
+  gap: 8px;
+  width: min(420px, 100%);
+  text-align: left;
+}
+.settings h3 {
+  font: 400 19px var(--f-display);
+  margin: 0;
+}
+.settings p {
+  margin: 0;
+  font-size: 12.5px;
+}
+.settings label {
+  display: grid;
+  gap: 4px;
+}
+.settings .field {
+  font: 13px var(--f-mono);
+  min-width: 0;
+}
+.settings-now {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-2);
+  min-width: 0;
+}
+.settings-now code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* Opened from the footer: anchored above it, bottom right; full width on a phone. */
+.sheet-back {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+.sheet {
+  position: fixed;
+  z-index: 21;
+  right: 12px;
+  bottom: calc(40px + env(safe-area-inset-bottom, 0px));
+  width: min(452px, calc(100vw - 24px));
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--ink);
+}
+.foot button.conn {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: inherit;
+  color: inherit;
+}
+.foot button.conn:hover span {
+  color: var(--ink);
+}

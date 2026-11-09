@@ -1,13 +1,17 @@
 //! End to end over a real WebSocket, with a scripted stand-in for `claude`
 //! (`atelier-driver/tests/fixtures/fake-claude.sh`).
 
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
+use atelier_server::tailnet::PeerAuth;
 use atelier_server::{App, Config};
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -88,6 +92,8 @@ async fn session_lifecycle_over_websocket() {
     let config = Config {
         home: tmp.path().join("home"),
         listen: "127.0.0.1:0".parse().unwrap(),
+        listen_tailscale: false,
+        tailscale_bin: "false".into(),
         claude_bin: FAKE.into(),
         token: Some("secret".into()),
     };
@@ -178,5 +184,86 @@ async fn session_lifecycle_over_websocket() {
 
     // A restarted server finds no orphans (the process exit was recorded).
     drop(c);
+    app.supervisor.shutdown().await;
+}
+
+/// Stands in for `tailscale whois`: trusts exactly the listed addresses.
+struct FakeTailnet(Vec<IpAddr>);
+
+impl PeerAuth for FakeTailnet {
+    fn trusted(&self, ip: IpAddr) -> futures::future::BoxFuture<'_, bool> {
+        Box::pin(async move { self.0.contains(&ip) })
+    }
+}
+
+/// Send a hello (with `token`, if any, and `origin` on the upgrade) and return
+/// `welcome`, or the `fatal` error text.
+async fn hello(addr: SocketAddr, token: Option<&str>, origin: Option<&str>) -> String {
+    let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
+    if let Some(o) = origin {
+        req.headers_mut().insert("origin", o.parse().unwrap());
+    }
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let mut msg = json!({"t": "hello", "protocol": 1, "client": "e2e"});
+    if let Some(t) = token {
+        msg["token"] = json!(t);
+    }
+    ws.send(Message::Text(msg.to_string().into())).await.unwrap();
+    let Some(Ok(Message::Text(t))) = ws.next().await else { panic!("no reply") };
+    let v: Value = serde_json::from_str(&t).unwrap();
+    if v["t"] == "welcome" { "welcome".into() } else { v["error"].as_str().unwrap().to_owned() }
+}
+
+async fn serve(app: App, tailnet: bool) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    if tailnet {
+        let svc = app.tailnet_router().into_make_service_with_connect_info::<SocketAddr>();
+        tokio::spawn(axum::serve(listener, svc).into_future());
+    } else {
+        tokio::spawn(axum::serve(listener, app.router()).into_future());
+    }
+    addr
+}
+
+#[tokio::test]
+async fn tailnet_peers_and_tokens() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = Config {
+        home: tmp.path().join("home"),
+        listen: "127.0.0.1:0".parse().unwrap(),
+        listen_tailscale: false,
+        tailscale_bin: "false".into(),
+        claude_bin: FAKE.into(),
+        token: Some("secret".into()),
+    };
+    std::fs::create_dir_all(&config.home).unwrap();
+    let app = App::start(config).await.unwrap();
+
+    let local: IpAddr = "127.0.0.1".parse().unwrap();
+    let mut trusting = app.clone();
+    trusting.peers = Arc::new(FakeTailnet(vec![local]));
+    let mut stranger = app.clone();
+    stranger.peers = Arc::new(FakeTailnet(vec![]));
+
+    // Loopback: the token is required, whoever vouches for the peer.
+    let loopback = serve(trusting.clone(), false).await;
+    assert_eq!(hello(loopback, Some("secret"), None).await, "welcome");
+    assert!(hello(loopback, None, None).await.starts_with("unauthorized"));
+    assert!(hello(loopback, Some("nope"), None).await.starts_with("unauthorized"));
+
+    // Tailnet, trusted peer: no token needed, but not from a foreign web page.
+    let trusted = serve(trusting, true).await;
+    assert_eq!(hello(trusted, None, None).await, "welcome");
+    assert_eq!(hello(trusted, None, Some("tauri://localhost")).await, "welcome");
+    assert!(hello(trusted, None, Some("https://evil.example")).await.starts_with("unauthorized"));
+    assert_eq!(hello(trusted, Some("secret"), Some("https://evil.example")).await, "welcome");
+
+    // Tailnet, someone else's device: only the token gets in.
+    let untrusted = serve(stranger, true).await;
+    let refused = hello(untrusted, None, None).await;
+    assert!(refused.starts_with("unauthorized") && refused.contains("Tailscale"), "{refused}");
+    assert_eq!(hello(untrusted, Some("secret"), None).await, "welcome");
+
     app.supervisor.shutdown().await;
 }

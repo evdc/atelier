@@ -1,10 +1,15 @@
 [package]
 name = "atelier-app"
-description = "The Atelier desktop host: starts atelierd if needed and shows the web UI."
+description = "The Atelier app host: shows the web UI; on desktop also starts atelierd if needed."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[lib]
+name = "atelier_app_lib"
+# staticlib is what the iOS Xcode project links; rlib is for the desktop binary.
+crate-type = ["staticlib", "rlib"]
 
 [[bin]]
 name = "atelier"
@@ -14,7 +19,10 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-atelier-proto.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }
+
+# Only the desktop host starts a server; the phone is a pure client.
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+atelier-proto.workspace = true
+serde.workspace = true

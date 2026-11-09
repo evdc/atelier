@@ -1,10 +1,10 @@
 # Atelier dev tasks. `make help` lists them.
-.PHONY: help dev server web app gen test check fmt
+.PHONY: help dev server web app ios-dev ios-build ios-run ios-device gen test check fmt
 
 HOME_DEV ?= $(HOME)/.atelier-dev
 
 help:            ## List tasks
-	@grep -E '^[a-z]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*## /\t/'
+	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*## /\t/'
 
 dev:             ## Run server (dev home) + web UI in a browser at http://localhost:5173
 	cargo build -p atelier-server
@@ -17,6 +17,33 @@ server:          ## Run only the server (dev home)
 app:             ## Run the desktop app (starts its own server in ~/.atelier if none is running)
 	cargo build -p atelier-server
 	cd app && cargo tauri dev
+
+IOS_SIM ?= iPhone 17 Pro
+IOS_APP := app/gen/apple/build/arm64-sim/Atelier.app
+
+ios-dev:         ## Run the iOS app in a simulator ($(IOS_SIM)) against the Vite dev server
+	cd app && cargo tauri ios dev "$(IOS_SIM)"
+
+ios-build:       ## Build the iOS app for the simulator (unsigned debug; signing is configured in Xcode)
+	cd app && cargo tauri ios build --debug --target aarch64-sim --ci
+
+ios-run: ios-build ## Build, install and launch the iOS app in the simulator ($(IOS_SIM))
+	xcrun simctl boot "$(IOS_SIM)" 2>/dev/null || true
+	open -a Simulator
+	xcrun simctl install "$(IOS_SIM)" $(IOS_APP)
+	xcrun simctl launch "$(IOS_SIM)" sh.atelier.app
+
+IOS_DEVICE ?=
+IOS_IPA := app/gen/apple/build/arm64/Atelier.ipa
+
+# `cargo tauri ios run` can't export to a device (tauri-cli 2.12 loses its temporary exportOptions plist), so build
+# the IPA with `ios build` and install it with devicectl.
+ios-device:      ## Build (release), install and launch on a connected iPhone; needs APPLE_DEVELOPMENT_TEAM, IOS_DEVICE (README)
+	@test -n "$$APPLE_DEVELOPMENT_TEAM" || { echo "set APPLE_DEVELOPMENT_TEAM (README: Run on your iPhone)"; exit 1; }
+	@test -n "$(IOS_DEVICE)" || { echo "set IOS_DEVICE to a name from: xcrun devicectl list devices"; exit 1; }
+	cd app && cargo tauri ios build --target aarch64 --ci
+	xcrun devicectl device install app --device "$(IOS_DEVICE)" $(IOS_IPA)
+	xcrun devicectl device process launch --device "$(IOS_DEVICE)" sh.atelier.app
 
 gen:             ## Regenerate TypeScript bindings from the Rust protocol types
 	rm -rf web/src/gen && cargo test -q -p atelier-core -p atelier-proto export_bindings >/dev/null

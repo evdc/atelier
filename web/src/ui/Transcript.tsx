@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, type Accessor } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, type Accessor } from "solid-js";
 import type { SessionRow } from "../gen/SessionRow";
 import type { Item } from "../agents/model";
 import type { LiveTranscript } from "../agents/transcript";
@@ -8,35 +8,109 @@ import { ToolBody } from "./tools/ToolBody";
 import { Ask } from "./Ask";
 import { Markdown } from "./Markdown";
 
+// Windowed: only items near the viewport exist in the DOM. Heights are
+// measured once rendered and cached by item id; unmeasured ones use a
+// per-kind estimate. Spacers stand in for everything outside the window.
+const GAP = 12; // matches .tx gap; folded into every cached height
+const OVERSCAN = 600;
+const EST: Record<Item["k"], number> = { user: 56, text: 110, thinking: 24, tool: 26, permission: 70, turn: 20, note: 24 };
+
+interface Win {
+  s: number;
+  e: number;
+  top: number;
+  bot: number;
+}
+const sameWin = (a: Win, b: Win) => a.s === b.s && a.e === b.e && a.top === b.top && a.bot === b.bot;
+
 export function TranscriptView(props: { live: LiveTranscript; session: Accessor<SessionRow> }) {
   const { t, streaming, ready } = props.live;
   let pane!: HTMLDivElement;
+  const heights = new Map<string, number>();
+  const h = (it: Item) => heights.get(it.id) ?? EST[it.k] + GAP;
   // Follow new output only while the reader is at the bottom.
   let stick = true;
+  const [win, setWin] = createSignal<Win>({ s: 0, e: 0, top: 0, bot: 0 }, { equals: sameWin });
+  const slice = createMemo(() => t.items.slice(win().s, win().e));
+
+  const sync = () => {
+    frame = 0;
+    const items = t.items;
+    const n = items.length;
+    const vh = pane.clientHeight;
+    let total = 0;
+    for (let i = 0; i < n; i++) total += h(items[i]);
+    // When following, the window is the end, whatever the (estimated) scrollTop says.
+    const top = stick ? Math.max(0, total - vh) : pane.scrollTop;
+    let acc = 0;
+    let s = 0;
+    while (s < n && acc + h(items[s]) < top - OVERSCAN) acc += h(items[s++]);
+    const topPx = acc;
+    let e = s;
+    while (e < n && acc <= top + vh + OVERSCAN) acc += h(items[e++]);
+    setWin({ s, e, top: topPx, bot: total - acc });
+    if (stick) pane.scrollTop = pane.scrollHeight;
+  };
+  let frame = 0;
+  const schedule = () => (frame ||= requestAnimationFrame(sync));
+
   const onScroll = () => {
     stick = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48;
+    schedule();
   };
+  createEffect(on([() => t.items.length, ready], () => sync()));
   createEffect(
-    on([() => t.items.length, streaming, ready], () => {
+    on(streaming, () => {
       if (stick) pane.scrollTop = pane.scrollHeight;
     }),
   );
-  // The pane shrinks when the on-screen keyboard comes up; keep the end in view.
-  onMount(() => {
-    const ro = new ResizeObserver(() => {
-      if (stick) pane.scrollTop = pane.scrollHeight;
-    });
-    ro.observe(pane);
-    // Off-screen items use estimated heights (content-visibility); as they
-    // render and report real ones the content height shifts, so re-stick.
-    ro.observe(pane.firstElementChild!);
-    onCleanup(() => ro.disconnect());
+
+  // One observer for the pane (keyboard resize) and every rendered item.
+  const ro = new ResizeObserver((entries) => {
+    for (const en of entries) {
+      const el = en.target as HTMLElement;
+      const id = el.dataset.id;
+      if (id === undefined) continue;
+      const next = en.borderBoxSize[0].blockSize + GAP;
+      const prev = heights.get(id) ?? Number(el.dataset.est);
+      heights.set(id, next);
+      // An item above the viewport changed height: hold the reader's place.
+      if (!stick && next !== prev && el.getBoundingClientRect().top < pane.getBoundingClientRect().top) {
+        pane.scrollTop += next - prev;
+      }
+    }
+    schedule();
+  });
+  onMount(() => ro.observe(pane));
+  onCleanup(() => {
+    ro.disconnect();
+    cancelAnimationFrame(frame);
   });
 
   return (
     <div class="pane" ref={pane} onScroll={onScroll}>
       <div class="tx">
-        <For each={t.items}>{(item, i) => <ItemView item={item} prev={t.items[i() - 1]} session={props.session} />}</For>
+        <Show when={win().top > 0}>
+          <div style={{ height: `${win().top - GAP}px` }} />
+        </Show>
+        <For each={slice()}>
+          {(item, i) => (
+            <div
+              class="it"
+              data-id={item.id}
+              data-est={EST[item.k] + GAP}
+              ref={(el) => {
+                ro.observe(el);
+                onCleanup(() => ro.unobserve(el));
+              }}
+            >
+              <ItemView item={item} prev={t.items[win().s + i() - 1]} session={props.session} />
+            </div>
+          )}
+        </For>
+        <Show when={win().bot > 0}>
+          <div style={{ height: `${win().bot - GAP}px` }} />
+        </Show>
         <Show when={streaming()}>
           <div class="msg">
             <span class="who agent" />

@@ -4,8 +4,9 @@ import { fixtureLive, fixtureSession } from "../agents/fixtures";
 import { TranscriptView } from "./Transcript";
 
 export function Fixture(props: { n: number }) {
-  const t0 = performance.now();
   const live = fixtureLive(props.n);
+  // After generating and folding events: the ticket's clock starts when events have arrived.
+  const t0 = performance.now();
   const [stat, setStat] = createSignal("");
   const session = () => fixtureSession();
   // Two frames after mount ≈ first paint; logged for the ticket's numbers.

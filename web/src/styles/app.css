@@ -178,6 +178,7 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  overflow-anchor: none; /* Transcript.tsx holds position itself */
 }
 .page {
   padding: 26px 30px 48px;
@@ -433,10 +434,10 @@
   align-content: start;
   max-width: calc(var(--measure) + 40px);
 }
-/* Items off-screen skip layout and paint; `auto` remembers each real height once seen. */
-.tx > * {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 48px;
+/* Windowed item wrapper (Transcript.tsx); a grid so children keep their own justify-self. */
+.it {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 .msg {
   display: grid;

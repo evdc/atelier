@@ -25,4 +25,5 @@ tauri = { version = "2", features = [] }
 # Only the desktop host starts a server; the phone is a pure client.
 [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
 atelier-proto.workspace = true
+tauri-plugin-notification = "2"
 serde.workspace = true

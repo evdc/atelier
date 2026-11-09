@@ -1,0 +1,8 @@
+{
+  "build": {
+    "beforeBuildCommand": { "script": "./bundle-prep.sh", "cwd": "." }
+  },
+  "bundle": {
+    "externalBin": ["binaries/atelierd"]
+  }
+}

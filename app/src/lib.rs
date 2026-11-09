@@ -6,8 +6,8 @@
 //! - Phone: a pure client. There's no server to start; the web UI connects with
 //!   the config it stored in `localStorage` (Settings).
 //!
-//! The UI talks to the server over WebSocket on both. The single Tauri command, `open_path` (desktop only),
-//! exists because "open this in my terminal/editor/Finder" must run on the client machine.
+//! The UI talks to the server over WebSocket on both. The few Tauri commands (desktop only) exist because they must act on the client machine:
+//! `open_path` ("open this in my terminal/editor/Finder") and `server_status`/`server_restart` (the local server's launchd job).
 
 #[cfg(desktop)]
 mod open;
@@ -20,7 +20,11 @@ use tauri::{WebviewUrl, WebviewWindowBuilder};
 pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
-    let builder = builder.invoke_handler(tauri::generate_handler![open::open_path]);
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        open::open_path,
+        server::server_status,
+        server::server_restart
+    ]);
     builder
         .setup(|app| {
             let mut window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default());

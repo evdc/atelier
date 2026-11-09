@@ -1,4 +1,6 @@
 import { createSignal, Show } from "solid-js";
+import { canOpenIn } from "../lib/openin";
+import { LocalServer } from "./LocalServer";
 import { hostServer, serverConfig, type Conn } from "../lib/conn";
 import { normalizeServerUrl, probe, savedServer, saveServer } from "../lib/server";
 import "../styles/settings.css";
@@ -60,6 +62,9 @@ export function Settings(props: { conn?: Conn; onClose?: () => void }) {
             <code>{cur().url}</code>
           </p>
         )}
+      </Show>
+      <Show when={props.conn && current && canOpenIn(current.url)}>
+        <LocalServer />
       </Show>
       <Show when={host && !overriding}>
         <p class="faint">Provided by the desktop app. Connecting elsewhere below overrides it on this device.</p>

@@ -28,3 +28,19 @@ export function openIn(kind: OpenKind, path: string): Promise<unknown> {
   const t = tauri();
   return t ? t.invoke("open_path", { kind, path }) : Promise.reject(new Error("not available here"));
 }
+
+/** The desktop app's view of the local server's launchd job (`server_status` in app/src/server.rs). */
+export interface LocalServerStatus {
+  manager: "launchd" | "other";
+  running: boolean;
+  server: string | null;
+  app_version: string;
+  log: string;
+  note: string | null;
+}
+
+export const localServerStatus = () =>
+  (tauri()?.invoke("server_status", {}) ?? Promise.reject(new Error("not available here"))) as Promise<LocalServerStatus>;
+
+export const restartLocalServer = () =>
+  (tauri()?.invoke("server_restart", {}) ?? Promise.reject(new Error("not available here"))) as Promise<unknown>;

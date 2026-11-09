@@ -66,3 +66,10 @@
 .foot button.conn:hover span {
   color: var(--ink);
 }
+.settings-local {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  padding: 8px 0;
+  border-block: 1px solid var(--line);
+}

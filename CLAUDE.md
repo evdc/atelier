@@ -12,7 +12,7 @@ crates/atelier-store    SQLite event log: append (group commit), projections, co
 crates/atelier-proto    Wire protocol + view row types. TS bindings generated from here into web/src/gen.
 crates/atelier-driver   AgentDriver trait + Claude Code driver (stream-json over stdio).
 crates/atelier-server   atelierd: views/ (projections+queries), supervisor (agent processes), rpc, sync (WebSocket).
-app/                    Tauri v2 desktop host. Starts atelierd if needed, injects {url, token}. No Tauri commands.
+app/                    Tauri v2 desktop host. Starts atelierd if needed, injects {url, token}, runs it as a launchd agent when bundled (server.rs). Few Tauri commands.
 web/                    SolidJS UI. lib/ (conn, views, router), agents/ (transcript folds), ui/ (components).
 .atelier/tickets/       Work items. Each is self-contained; pick one, follow it, tick its acceptance list.
 spikes/                 Throwaway experiments that informed decisions (e.g. the CC stream-json protocol).

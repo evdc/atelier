@@ -1,5 +1,5 @@
 # Atelier dev tasks. `make help` lists them.
-.PHONY: help dev server web app ios-dev ios-build ios-run ios-device gen test check fmt
+.PHONY: help dev server web app bundle ios-dev ios-build ios-run ios-device gen test check fmt
 
 HOME_DEV ?= $(HOME)/.atelier-dev
 
@@ -20,6 +20,9 @@ app:             ## Run the desktop app (starts its own server in ~/.atelier if 
 
 IOS_SIM ?= iPhone 17 Pro
 IOS_APP := app/gen/apple/build/arm64-sim/Atelier.app
+
+bundle:          ## Build Atelier.app with atelierd bundled as a sidecar (release)
+	cd app && cargo tauri build --config bundle.conf.json
 
 ios-dev:         ## Run the iOS app in a simulator ($(IOS_SIM)) against the Vite dev server
 	cd app && cargo tauri ios dev "$(IOS_SIM)"

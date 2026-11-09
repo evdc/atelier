@@ -7,6 +7,7 @@
 //!           supervisor ◀── driver events   sync: subs (events) + watches (rows)
 //! ```
 
+pub mod autotitle;
 pub mod config;
 pub mod rpc;
 pub mod supervisor;
@@ -51,7 +52,8 @@ impl App {
 
     pub async fn with_driver(config: Config, driver: Arc<dyn AgentDriver>) -> Result<Self> {
         let store = Store::open(config.db_path(), views::projections())?;
-        let supervisor = Supervisor::new(store.clone(), driver);
+        let title_bin = config.auto_title.then(|| config.claude_bin.clone());
+        let supervisor = Supervisor::new(store.clone(), driver, title_bin);
         supervisor.recover().await?;
         let (stopping, _) = tokio::sync::watch::channel(false);
         let peers = Arc::new(tailnet::Tailscale::new(config.tailscale_bin.clone()));

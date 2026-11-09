@@ -412,6 +412,39 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The title is a button so it can be renamed from the keyboard; it looks like the heading it replaces. */
+.sh .title-btn {
+  all: unset;
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  text-decoration: underline dotted;
+  text-decoration-color: transparent;
+  text-underline-offset: 5px;
+}
+.sh .title-btn:hover {
+  text-decoration-color: var(--ink-3);
+}
+.sh .title-btn:focus-visible {
+  outline: 1px solid var(--hair);
+  outline-offset: 3px;
+}
+.sh .title-edit {
+  flex: 1;
+  min-width: 160px;
+  font-family: var(--f-display);
+  font-size: 20px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--hair);
+  border-radius: 0;
+  padding: 0 0 2px;
+  outline: none;
+}
 .sh .meta {
   width: 100%;
   display: flex;
@@ -920,6 +953,10 @@
   .sh h3 {
     flex: 1 1 calc(100% - 80px);
     min-width: 0;
+    font-size: 18px;
+  }
+  .sh .title-edit {
+    flex: 1 1 calc(100% - 80px);
     font-size: 18px;
   }
   .sh .tag {

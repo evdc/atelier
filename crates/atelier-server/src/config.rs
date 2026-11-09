@@ -18,6 +18,8 @@ pub struct Config {
     pub tailscale_bin: PathBuf,
     /// `ATELIER_CLAUDE_BIN`, default `claude` (from PATH).
     pub claude_bin: PathBuf,
+    /// Ask the agent for a title after each session's first turn. `ATELIER_AUTO_TITLE=0` turns it off.
+    pub auto_title: bool,
     /// Shared secret clients present in `hello`. Generated on first run and
     /// stored in `<home>/token`. `None` disables auth (tests only).
     pub token: Option<String>,
@@ -45,11 +47,12 @@ impl Config {
         let listen =
             listen.unwrap_or_else(|| format!("127.0.0.1:{DEFAULT_PORT}")).parse().context("bad listen address")?;
         let claude_bin = std::env::var_os("ATELIER_CLAUDE_BIN").map(PathBuf::from).unwrap_or_else(|| "claude".into());
+        let auto_title = !std::env::var("ATELIER_AUTO_TITLE").is_ok_and(|v| matches!(v.as_str(), "0" | "false" | "no"));
         let listen_tailscale =
             std::env::var("ATELIER_LISTEN_TAILSCALE").is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "yes"));
         let tailscale_bin = crate::tailnet::Tailscale::find_bin();
         let token = Some(atelier_proto::local::token(&home)?);
-        Ok(Self { home, listen, listen_tailscale, tailscale_bin, claude_bin, token })
+        Ok(Self { home, listen, listen_tailscale, tailscale_bin, claude_bin, auto_title, token })
     }
 
     pub fn db_path(&self) -> PathBuf {

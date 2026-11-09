@@ -10,13 +10,16 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use atelier_core::domain::{
-    AgentKind, ProjectAdded, ProjectRemoved, SessionArchived, SessionCreated, WorkspaceMode, WorkspaceRemoved,
+    AgentKind, ProjectAdded, ProjectRemoved, SessionArchived, SessionCreated, SessionRenamed, WorkspaceMode,
+    WorkspaceRemoved,
 };
 use atelier_core::{Actor, NewEvent, SessionId, stream};
 use atelier_proto::{Archived, Call, ProjectRow, SessionRow};
 use serde_json::{Value, json};
 
 use crate::{App, views, workspace};
+
+const MAX_TITLE_CHARS: usize = 200;
 
 pub async fn handle(app: &App, call: Call) -> Result<Value> {
     match call {
@@ -67,6 +70,18 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
         }
         Call::SessionAnswer { session, request_id, decision } => {
             app.supervisor.answer(&session_row(app, &session).await?, request_id, decision).await?;
+            Ok(Value::Null)
+        }
+        Call::SessionRename { session, title } => {
+            let title = title.trim().to_owned();
+            if title.is_empty() {
+                bail!("the title can't be empty");
+            }
+            if title.chars().count() > MAX_TITLE_CHARS {
+                bail!("the title is longer than {MAX_TITLE_CHARS} characters");
+            }
+            let s = session_row(app, &session).await?;
+            app.store.append_one(NewEvent::new(&s.stream, Actor::User, &SessionRenamed { title })).await?;
             Ok(Value::Null)
         }
         Call::SessionStop { session } => {

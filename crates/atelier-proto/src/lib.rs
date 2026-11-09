@@ -110,6 +110,9 @@ pub enum Call {
     SessionInterrupt { session: SessionId },
     #[serde(rename = "session.answer")]
     SessionAnswer { session: SessionId, request_id: String, decision: PermissionDecision },
+    /// Set a session's title (the person's rename). Result: none.
+    #[serde(rename = "session.rename")]
+    SessionRename { session: SessionId, title: String },
     /// Stop the agent process. The session stays and can be resumed.
     #[serde(rename = "session.stop")]
     SessionStop { session: SessionId },

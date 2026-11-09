@@ -3,6 +3,12 @@
 # A user message produces: init, a token delta, an assistant message and a
 # permission request. The answer to that request ends the turn, echoing the
 # control_response we received so tests can inspect it.
+# The one-shot titler (`claude -p --no-session-persistence ... --output-format json`) gets a fixed title.
+case "$*" in
+  *--no-session-persistence*)
+    echo '{"type":"result","subtype":"success","is_error":false,"result":"Login rate limits"}'
+    exit 0 ;;
+esac
 while IFS= read -r line; do
   case "$line" in
     *'"type":"user"'*)

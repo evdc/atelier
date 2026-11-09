@@ -17,12 +17,26 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
   const live = createTranscript(conn, s().stream);
   const [error, setError] = createSignal<string | null>(null);
   const [note, setNote] = createSignal<string | null>(null);
+  const [renaming, setRenaming] = createSignal(false);
+  const [draft, setDraft] = createSignal("");
 
   const changes = createChanges(s);
   const sum = () => totals(changes());
 
   const act = (p: Promise<unknown>) => p.catch((e: Error) => setError(e.message));
   const busy = () => s().status === "running" || s().status === "waiting";
+
+  const startRename = () => {
+    setDraft(s().title);
+    setRenaming(true);
+  };
+  // Enter saves, Escape and leaving the field cancel. The new title comes back as a row patch.
+  const finishRename = (save: boolean) => {
+    if (!renaming()) return;
+    setRenaming(false);
+    const title = draft().trim();
+    if (save && title && title !== s().title) act(conn.call("session.rename", { session: s().id, title }));
+  };
 
   return (
     <div class="sv" classList={{ full: panelMode() === "full" }}>
@@ -32,7 +46,40 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
           ‹
         </button>
         <i class={`st ${s().status}`} title={s().status} />
-        <h3 title={s().title}>{s().title}</h3>
+        <Show
+          when={renaming()}
+          fallback={
+            <h3 title={s().title}>
+              <button type="button" class="title-btn" title="Rename" onClick={startRename}>
+                {s().title}
+              </button>
+            </h3>
+          }
+        >
+          <input
+            class="title-edit"
+            aria-label="Session title"
+            value={draft()}
+            ref={(el) =>
+              queueMicrotask(() => {
+                el.focus();
+                el.select();
+              })
+            }
+            onInput={(e) => setDraft(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.isComposing) return;
+              if (e.key === "Enter") {
+                e.preventDefault();
+                finishRename(true);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                finishRename(false);
+              }
+            }}
+            onBlur={() => finishRename(false)}
+          />
+        </Show>
         <span class={`tag ${s().agent}`}>claude</span>
         <Show when={busy()}>
           <button class="btn quiet" onClick={() => act(conn.call("session.interrupt", { session: s().id }))}>

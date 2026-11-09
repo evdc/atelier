@@ -47,7 +47,7 @@ export function fold(t: Transcript, ev: Event) {
     case "permission.requested": {
       const b = ev.body as PermissionRequested;
       t.perms[b.request_id] = t.items.length;
-      const suggestions = (b.raw as { permission_suggestions?: PermissionSuggestion[] }).permission_suggestions ?? [];
+      const suggestions = (b.raw as { permission_suggestions?: PermissionSuggestion[] } | null)?.permission_suggestions ?? [];
       t.items.push({
         k: "permission",
         id: b.request_id,

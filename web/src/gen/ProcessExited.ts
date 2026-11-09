@@ -5,4 +5,8 @@ export type ProcessExited = { reason: ExitReason, code: number | null,
 /**
  * Last lines of stderr, for diagnosing crashes.
  */
-stderr_tail?: string, };
+stderr_tail?: string, 
+/**
+ * Why, beyond `reason`: `"idle"` when the supervisor reaped an idle process.
+ */
+detail?: string | null, };

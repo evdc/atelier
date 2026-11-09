@@ -158,6 +158,9 @@ pub struct ProcessExited {
     /// Last lines of stderr, for diagnosing crashes.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub stderr_tail: String,
+    /// Why, beyond `reason`: `"idle"` when the supervisor reaped an idle process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 kind!(ProcessExited, "process.exited");
 

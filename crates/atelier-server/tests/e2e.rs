@@ -95,6 +95,7 @@ async fn session_lifecycle_over_websocket() {
         listen_tailscale: false,
         tailscale_bin: "false".into(),
         claude_bin: FAKE.into(),
+        idle_timeout: Duration::from_secs(600),
         token: Some("secret".into()),
     };
     std::fs::create_dir_all(&config.home).unwrap();
@@ -187,6 +188,93 @@ async fn session_lifecycle_over_websocket() {
     app.supervisor.shutdown().await;
 }
 
+/// The `(kind, body)` pairs of one `events` frame.
+fn kinds_in(frame: &Value) -> Vec<(String, Value)> {
+    frame["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["kind"].as_str().unwrap().to_owned(), e["body"].clone()))
+        .collect()
+}
+
+#[tokio::test]
+async fn idle_process_is_reaped_and_resumed_on_next_message() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"]);
+
+    // A one-second timeout: the reaper runs every second.
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(1)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    c.send(json!({"t": "watch", "id": 2, "view": "sessions", "scope": project})).await;
+    c.until(|m| m["t"] == "snapshot" && m["watch"] == 2).await;
+
+    let created = c.rpc("session.create", json!({"project": project, "prompt": "first"})).await;
+    let (sid, stream) = (created["id"].clone(), created["stream"].as_str().unwrap().to_owned());
+    c.until(|m| session_row_matches(m, |r| r["id"] == sid && r["status"] == "waiting")).await;
+    c.send(json!({"t": "sub", "id": 3, "filter": {"stream": stream}, "from": 1})).await;
+    c.until(|m| m["t"] == "live" && m["sub"] == 3).await;
+
+    // Waiting on a permission request is not idle, however long it waits.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    c.rpc("session.changes", json!({"session": sid})).await;
+    assert!(!c.event_kinds().iter().any(|k| k == "process.exited"), "reaped while waiting");
+
+    let request_id = c
+        .seen
+        .iter()
+        .filter(|m| m["t"] == "events")
+        .flat_map(kinds_in)
+        .rfind(|(k, _)| k == "permission.requested")
+        .expect("permission request")
+        .1["request_id"]
+        .clone();
+    c.rpc("session.answer", json!({"session": sid, "request_id": request_id, "decision": {"behavior": "allow"}})).await;
+    c.until(|m| session_row_matches(m, |r| r["id"] == sid && r["status"] == "idle" && r["turns"] == 1)).await;
+
+    // Idle now: the reaper stops the process, and the log says why.
+    let frame = c.until(|m| m["t"] == "events" && kinds_in(m).iter().any(|(k, _)| k == "process.exited")).await;
+    let (_, exited) = kinds_in(&frame).into_iter().find(|(k, _)| k == "process.exited").unwrap();
+    assert_eq!((exited["reason"].clone(), exited["detail"].clone()), (json!("stopped"), json!("idle")));
+    c.until(|m| session_row_matches(m, |r| r["id"] == sid && r["alive"] == false && r["status"] == "idle")).await;
+
+    // The next message starts a new process that resumes the conversation.
+    c.rpc("session.send", json!({"session": sid, "text": "second"})).await;
+    let second =
+        c.until(|m| session_row_matches(m, |r| r["id"] == sid && r["status"] == "waiting" && r["alive"] == true)).await;
+    assert_eq!(second["upsert"][0]["turns"], 1);
+    let request_id = c
+        .seen
+        .iter()
+        .filter(|m| m["t"] == "events")
+        .flat_map(kinds_in)
+        .rfind(|(k, _)| k == "permission.requested")
+        .unwrap()
+        .1["request_id"]
+        .clone();
+    c.rpc("session.answer", json!({"session": sid, "request_id": request_id, "decision": {"behavior": "allow"}})).await;
+    c.until(|m| session_row_matches(m, |r| r["id"] == sid && r["status"] == "idle" && r["turns"] == 2)).await;
+
+    let resumed: Vec<Value> = c
+        .seen
+        .iter()
+        .filter(|m| m["t"] == "events")
+        .flat_map(kinds_in)
+        .filter(|(k, _)| k == "cc.system")
+        .map(|(_, b)| b["resumed"].clone())
+        .collect();
+    assert_eq!(resumed, vec![json!(false), json!(true)]);
+
+    c.rpc("session.stop", json!({"session": sid})).await;
+    c.until(|m| session_row_matches(m, |r| r["alive"] == false)).await;
+    drop(c);
+    app.supervisor.shutdown().await;
+}
+
 /// Stands in for `tailscale whois`: trusts exactly the listed addresses.
 struct FakeTailnet(Vec<IpAddr>);
 
@@ -235,6 +323,7 @@ async fn tailnet_peers_and_tokens() {
         listen_tailscale: false,
         tailscale_bin: "false".into(),
         claude_bin: FAKE.into(),
+        idle_timeout: Duration::from_secs(600),
         token: Some("secret".into()),
     };
     std::fs::create_dir_all(&config.home).unwrap();
@@ -268,13 +357,14 @@ async fn tailnet_peers_and_tokens() {
     app.supervisor.shutdown().await;
 }
 
-async fn boot(tmp: &Path) -> (App, std::net::SocketAddr) {
+async fn boot(tmp: &Path, idle_timeout: Duration) -> (App, std::net::SocketAddr) {
     let config = Config {
         home: tmp.join("home"),
         listen: "127.0.0.1:0".parse().unwrap(),
         listen_tailscale: false,
         tailscale_bin: "false".into(),
         claude_bin: FAKE.into(),
+        idle_timeout,
         token: Some("secret".into()),
     };
     std::fs::create_dir_all(&config.home).unwrap();
@@ -303,7 +393,7 @@ async fn worktree_changes_and_archive_cleanup() {
     git(&repo, &["add", "."]);
     git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
 
-    let (app, addr) = boot(tmp.path()).await;
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
     let mut c = Client::connect(addr, "secret").await;
     let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
     c.send(json!({"t": "watch", "id": 2, "view": "sessions", "scope": project})).await;

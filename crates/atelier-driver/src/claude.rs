@@ -158,7 +158,7 @@ impl AgentDriver for ClaudeCode {
             let reason = if stopping.load(Ordering::Acquire) { ExitReason::Stopped } else { ExitReason::Exited };
             let stderr_tail = tail.lock().unwrap().iter().cloned().collect::<Vec<_>>().join("\n");
             let code = status.ok().and_then(|s| s.code());
-            let _ = ev_tx.send(DriverEvent::Exited(ProcessExited { reason, code, stderr_tail })).await;
+            let _ = ev_tx.send(DriverEvent::Exited(ProcessExited { reason, code, stderr_tail, detail: None })).await;
         });
 
         Ok(AgentHandle { pid, native_id, cmds: cmd_tx, events: ev_rx })

@@ -91,7 +91,14 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
             Stop
           </button>
         </Show>
-        <Show when={!s().archived}>
+        <Show
+          when={!s().archived}
+          fallback={
+            <button class="btn quiet" onClick={() => act(conn.call("session.unarchive", { session: s().id }))}>
+              Unarchive
+            </button>
+          }
+        >
           <button
             class="btn quiet"
             onClick={() =>

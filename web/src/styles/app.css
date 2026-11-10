@@ -426,6 +426,13 @@
 .list .grp {
   padding: 12px 12px 4px;
 }
+.show-arch {
+  display: block;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+  cursor: pointer;
+}
 .row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

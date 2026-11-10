@@ -99,6 +99,13 @@ kind!(SessionRenamed, "session.renamed");
 pub struct SessionArchived {}
 kind!(SessionArchived, "session.archived");
 
+/// The person put an archived session back in their list. It does not restore a worktree
+/// that archiving removed.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SessionUnarchived {}
+kind!(SessionUnarchived, "session.unarchived");
+
 /// A session's branch was deleted and it let go of its worktree (on archive, when nothing
 /// would be lost). The directory is deleted too unless `pooled`, in which case it waits,
 /// detached, for the next session.

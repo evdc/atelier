@@ -45,6 +45,14 @@ impl Client {
         reply["ok"].clone()
     }
 
+    /// Like `until`, but first looks at frames received since `from` (an index into `seen`).
+    async fn until_after(&mut self, from: usize, pred: impl Fn(&Value) -> bool) -> Value {
+        if let Some(m) = self.seen[from..].iter().find(|m| pred(m)) {
+            return m.clone();
+        }
+        self.until(pred).await
+    }
+
     /// Read frames until one matches (keeping all of them in `seen`).
     async fn until(&mut self, pred: impl Fn(&Value) -> bool) -> Value {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -345,6 +353,37 @@ async fn session_rename_over_websocket() {
 
     // The rename is in the log, as the person's.
     assert_eq!(renamed_titles(&mut c, &stream).await, vec![("user".into(), "Login rate limits".into())]);
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn archived_session_can_be_unarchived_but_not_resumed_without_its_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"]);
+
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let (_, sid, _) = session_in_project(&mut c, &repo, "Tidy the README").await;
+    c.rpc("session.answer", json!({"session": sid, "request_id": "r1", "decision": {"behavior": "allow"}})).await;
+    c.until(|m| session_row_matches(m, |r| r["id"] == sid && r["status"] == "idle")).await;
+
+    // Clean worktree: archiving removes it. Patches that arrive while an rpc is awaited are
+    // already in `seen`, so each wait starts from the frames received after its own call.
+    let mark = c.seen.len();
+    let archived = c.rpc("session.archive", json!({"session": sid})).await;
+    assert_eq!(archived["removed"], true, "{archived}");
+    c.until_after(mark, |m| session_row_matches(m, |r| r["id"] == sid && r["archived"] == true)).await;
+
+    let mark = c.seen.len();
+    c.rpc("session.unarchive", json!({"session": sid})).await;
+    c.until_after(mark, |m| session_row_matches(m, |r| r["id"] == sid && r["archived"] == false)).await;
+
+    // The worktree is gone, so a new message is refused before anything is logged.
+    let why = rpc_err(&mut c, "session.send", json!({"session": sid, "text": "hello again"})).await;
+    assert!(why.contains("worktree was removed"), "{why}");
     app.supervisor.shutdown().await;
 }
 

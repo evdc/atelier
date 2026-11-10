@@ -9,8 +9,8 @@
 
 use anyhow::{Context, Result, bail};
 use atelier_core::domain::{
-    AgentKind, ProjectAdded, ProjectRemoved, SessionArchived, SessionCreated, SessionRenamed, WorkspaceMode,
-    WorkspaceRemoved,
+    AgentKind, ProjectAdded, ProjectRemoved, SessionArchived, SessionCreated, SessionRenamed, SessionUnarchived,
+    WorkspaceMode, WorkspaceRemoved,
 };
 use atelier_core::{Actor, NewEvent, SessionId, stream};
 use atelier_proto::{Archived, Call, ProjectRow, SessionRow};
@@ -65,6 +65,12 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                 bail!("message is empty");
             }
             let s = session_row(app, &session).await?;
+            // Archiving released the worktree (its directory may be pooled for another session), and
+            // un-archiving doesn't bring it back. Refuse before the message is logged.
+            let id = s.id.as_str().to_owned();
+            if app.store.read(move |c| views::sessions::worktree_removed(c, &id)).await? {
+                bail!("its worktree was removed when it was archived; start a new session");
+            }
             app.supervisor.send(&s, text).await?;
             Ok(Value::Null)
         }
@@ -117,6 +123,13 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                 }
             }
             Ok(serde_json::to_value(result)?)
+        }
+        Call::SessionUnarchive { session } => {
+            let s = session_row(app, &session).await?;
+            if s.archived {
+                app.store.append_one(NewEvent::new(&s.stream, Actor::User, &SessionUnarchived {})).await?;
+            }
+            Ok(Value::Null)
         }
         Call::SessionChanges { session } => {
             let s = session_row(app, &session).await?;

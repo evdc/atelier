@@ -120,6 +120,10 @@ pub enum Call {
     /// Result: [`Archived`].
     #[serde(rename = "session.archive")]
     SessionArchive { session: SessionId },
+    /// Put an archived session back in the list. Does not restore a removed worktree.
+    /// Result: none.
+    #[serde(rename = "session.unarchive")]
+    SessionUnarchive { session: SessionId },
     /// What the session changed in its workspace. Result: [`Changes`].
     #[serde(rename = "session.changes")]
     SessionChanges { session: SessionId },

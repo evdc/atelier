@@ -62,7 +62,7 @@ export function SessionRowLink(props: { s: SessionRow; on?: boolean; projectName
           const commit = start.live && rowSwipeCommits(e.clientX - start.x, el?.offsetWidth ?? 360);
           swiped = start.live;
           reset();
-          if (commit) conn.call("session.archive", { session: s().id }).catch(() => {});
+          if (commit && !s().archived) conn.call("session.archive", { session: s().id }).catch(() => {});
         }}
         onPointerCancel={reset}
         // A drag that ends over the link would otherwise also navigate.
@@ -79,6 +79,9 @@ export function SessionRowLink(props: { s: SessionRow; on?: boolean; projectName
         <span class="m">
           <Show when={s().status === "waiting"}>
             <span class="needs">waiting on you</span>
+          </Show>
+          <Show when={s().archived}>
+            <span class="faint">archived</span>
           </Show>
           <Show when={props.projectName}>
             <span>{props.projectName}</span>

@@ -194,7 +194,7 @@ and M2 work is ticketed in `.atelier/tickets/`.
 | M6 | Since-you-left digest, handoff notes | step 5 |
 | M7 | Pages, peek, drift marks, live overlay | steps 3–4 |
 | M8 | Proposals (parts, accept-in-parts, revise, alternatives) | step 8 |
-| M9 | `spawn`, subagent tree, budgets | step 7 |
+| M9 | `spawn`, subagent tree, budgets (§11; messaging and `ask` land earlier, AT-026–033) | step 7 |
 | — | Own harness: context as a projection of the log; RLM tools | |
 
 ## 10. Automations **[proposed]**
@@ -464,7 +464,156 @@ the MCP server. Suggested tickets, in order:
 6. The UI: the list, the form editor, the run history, in-context creation and provenance lines.
 7. MCP exposure (with M4's MCP server).
 
-## 11. Open questions
+## 11. Sessions talking to sessions **[proposed]**
+
+Agents can find other sessions, read them, message them, ask them questions, and start new ones. These are tools
+on the Atelier MCP server (§4), so every exchange is in the log, shows in both transcripts, and works the same for
+any vendor. Tickets AT-026 to AT-033.
+
+### 11.1 Why: persistent context is what we already have
+
+The argument, after *On the nature of the swarm* (hallerite.com, 2026), goes like this:
+- One context window caps what one agent can do. Compaction extends it in time but loses things, because it has to
+  guess what will matter later.
+- A one-off subagent (Claude Code's `Task`) summarizes *after* the question is known, which is better, but then it
+  forgets everything. You can't ask it a follow-up.
+- A **persistent** agent avoids both problems. You never decide in advance what to keep, because you can go back and
+  ask it.
+
+Atelier already keeps every session around: its log, its worktree, and its resumable CC session. What's missing is a
+way for one agent to reach another. So most of this section is plumbing, not new concepts. Ideas taken from the
+article:
+
+| idea | here |
+|---|---|
+| Persistent beats one-off when follow-ups are likely | Spawned children are ordinary sessions. Any session can `ask` them later, including archived ones (§11.4). |
+| **Mesh** for communication, **tree** only where it pays for itself | Messaging is a mesh: any session can reach any other. Spawning makes a tree, and the tree is used only for accounting (budgets, limits, the Agents view). Replies don't have to route through the root. |
+| Roles emerge: the agent that built context on X becomes the one to ask about X | Discovery is by search over what sessions *said* (AT-024/025), not by assigned roles. Agents are told to look for an existing session that knows before they spawn a new one or re-derive. |
+| Communication is lossy and costs tokens | Messages carry references (`seq`s, later `at://` addresses) to the source, so the recipient can `read` the original instead of trusting a summary. |
+| Shared structured state as the source of truth | That's the log plus `.atelier/` (tickets, later a channel). Agents coordinate through tickets as much as through messages. |
+| Let agents change their own organization | Already §10: agents write automations and people arm them. |
+| Failure modes: duplicated work, endless chatter, context rot | Search before spawning; hop limits and deadlock checks (§11.3); asking a *fork* so the expert's context isn't spent on your question (§11.4). |
+
+### 11.2 Tools
+
+All tools are on the `atelier` MCP server, which atelierd serves on loopback at `/mcp` (AT-026). Each agent process
+gets a per-process bearer token, so the server knows which session is calling, and calls run as
+`Actor::Agent(session)`.
+
+| tool | what | ticket |
+|---|---|---|
+| `sessions { project?, status?, include_archived? }` | Directory: one line per session (id, title, status, branch, parent, last activity). Your own row is marked. | AT-026 |
+| `read { session, around? \| before?, max_chars? }` | A bounded text rendering of a session's transcript, made of the same documents the search index uses. | AT-026 |
+| `search { q, project? }` | `search.query` (AT-024/025) as a tool. | AT-027 |
+| `send { to, text, refs? }` | Asynchronous. Delivered as a new turn in the target, waking it if idle. Replies come back the same way. | AT-028 |
+| `spawn { task, title?, workspace?, model?, budget?, wait?, review? }` | Starts a child session. `workspace` can branch from or share any session (§11.5). Returns `{ id }`, or with `wait`, the child's answer. | AT-029 |
+| `ask { to, question, fork? }` | Synchronous. Blocks until the target's turn ends and returns its final text. With `fork`, a throwaway fork answers. | AT-030, AT-031 |
+
+Read tools and `send`/`ask` are pre-allowed (`--allowedTools mcp__atelier__…`). `spawn` goes through the normal
+permission mode, because it creates a worktree and spends money. "Always allow" (AT-007) covers people who want it
+unattended. The server enforces the structural limits itself (§11.3), so pre-allowing the rest is safe.
+
+These are the `Call`s of §10.7, so they are also UI actions and automation steps. `session.send` with an agent actor
+appends `agent.message` instead of `user.message`.
+
+### 11.3 Messages
+
+- **Event.** `agent.message { from, text, mode: tell|ask, hops, refs[], ask_id? }` goes in the *target's* stream with
+  `actor = agent:<from>` and `cause` = the sender's `cc.assistant` event that made the tool call. The sender's side is
+  already in its own transcript as the tool call and its result, so nothing is duplicated.
+- **Delivery.** The supervisor delivers it like a user message. If the session isn't running, delivery resumes it. If
+  a turn is in progress, the message queues (CC queues stdin turns mid-turn; see `queued_turn_count`). It never
+  interrupts the target. Delivering to an archived session is refused, and the error suggests `ask { fork: true }`.
+- **Envelope.** The agent sees:
+  ```
+  <atelier-message from="7f3a" title="Fix WAL checkpoint" project="atelier" mode="tell">
+  …text…
+  </atelier-message>
+  (From another session, not the person. To reply, call send with to="7f3a". Your reply text in this turn is not delivered.)
+  ```
+- **Hops.**
+  - A message's `hops` is one more than the hops of the input that started the sender's current turn. A person's
+    message counts as 0.
+  - At 6 the send is refused with "hop limit: ask the person". Any human message resets the count.
+  - This stops ping-pong without a clock. The sessions projection keeps the last input's hops.
+- **Deadlock.** `ask` blocks the asker's turn. Before blocking, the server walks the wait-for graph of open asks; if
+  the new ask would close a cycle (A asks B, B asks A), it fails at once.
+- **UI.** In the target's transcript an agent message is a card with a gold rule, *from "Fix WAL checkpoint"*, which
+  links to the sender. It is not a red "needs you" item and doesn't notify.
+
+### 11.4 Asking a fork
+
+Asking a persistent agent costs it context: the question and answer stay in its window and add to its rot. CC can
+fork a session (`--resume <id> --fork-session`), so `ask { fork: true }` answers from a throwaway copy:
+- The fork has the target's full memory up to now.
+- It runs as a read-only share of the target's workspace (§11.5), answers once, and is archived.
+- The target is never disturbed. Its context isn't spent, it can be mid-turn, and it can even be archived.
+
+This makes every finished session a standing oracle on whatever it worked on, and it's something only an
+event-sourced host that keeps every session can offer. Forked answers are recorded like any `ask`. The fork is a
+hidden child session (`parent = asker`, `origin = fork-of:<target>`) whose cost lands in the asker's tree.
+
+### 11.5 Workspaces from other sessions (AT-033)
+
+A session is two independent choices: a **context** (fresh, or a fork of a session) and a **workspace**. Besides a
+new worktree or the project directory, a workspace can now come from another session X:
+
+- **Share X, read-only** (`WorkspaceMode::Shared`, `from: X`).
+  - It runs in X's directory and sees X's live, uncommitted edits.
+  - Starting it with Edit/Write/NotebookEdit disallowed plus a system note keeps it read-only. That's a convention,
+    not a sandbox: Bash can still write, and any write shows in X's Changes.
+- **Branch from X.** A new worktree at a *snapshot* of X's working tree, uncommitted files included.
+  - The snapshot is taken with a temporary index (`read-tree HEAD; add -A; write-tree; commit-tree`) and kept on
+    `refs/atelier/snap/<id>`, so X is never touched.
+  - Its `base` is the snapshot, so the new session's Changes show only its own work.
+  - M5's per-turn checkpoints reuse the same helper.
+
+| context | workspace | is |
+|---|---|---|
+| fresh | share X | a reviewer: unbiased, sees the real diff, re-checks later with memory of what it flagged |
+| fresh | branch from X | a parallel subtask or an alternative from where X is (`spawn`'s default) |
+| fork of X | share X | ask-a-fork (§11.4) |
+| fork of X at m | branch from X's checkpoint at m | M5's "fork here" |
+
+**One owner per worktree.** Only the session that created a worktree writes to it and releases it.
+- Archiving the owner while someone is still sharing keeps the worktree.
+- The last sharer's archive runs the owner's usual release.
+- The pool already skips any path a live session uses.
+
+Write-sharing (pairing) would need a turn-level lock, so it waits; branch-from covers parallel writes.
+
+The person gets this as "Review changes" on a session, which starts a fresh session sharing it read-only with a review
+prompt, and as two new options in the new-session form. Agents get it through `spawn { workspace }` and
+`spawn { review: "self" }`.
+
+### 11.6 Spawn and trees
+
+This is mockup step 7, M9.
+- `SessionCreated` gains `parent: Option<SessionId>` and `budget` (both `#[serde(default)]`).
+- Child workspaces (§11.5):
+  - `{ branch: self|id }`, the default, branches from a snapshot of the parent, including uncommitted work;
+  - `{ share: self|id }` is read-only, for reviewers and researchers;
+  - `fresh` is a new worktree from the project's HEAD;
+  - `project` is the project checkout.
+- The child's first message is the task, wrapped in an envelope that says who spawned it and how to report back.
+  With `wait`, its first turn's final text is the tool result, as with `ask`.
+- Limits, checked in `rpc`: depth ≤ 3, ≤ 4 live children per session, and the tree's budget (AT-032). They're
+  configurable in Settings and every refusal says why.
+- The tree is used for accounting and the Agents view. It doesn't restrict who can talk to whom.
+- The sidebar nests children under their parent. The session header shows provenance in gold: *spawned by "Move
+  sessions to opaque tokens"*.
+
+### 11.7 Not yet
+
+- **A project channel.** One shared stream that agents post to and read, for broadcast instead of N² messages ("I'm
+  changing the writer; don't touch `store/`"). Build it when a real swarm shows the need.
+- **"Knows about" lines.** An agent-written one-line summary per session, refreshed every N turns like the autotitle
+  (AT-017), shown in `sessions` so routing questions to specialists gets cheap. Search may be enough.
+- **Interrupting another session** ("urgent"). People can, agents can't, for now.
+- **Observed subagents.** Drawing CC's own `Task` subagents (`parent_tool_use_id`) in the same tree, read-only.
+- **Returning proposals** (`returns: "proposal"` in the mockup). Waits for M8.
+
+## 12. Open questions
 
 - Client-side event cache (IndexedDB) for instant cold start on the phone — measure first (AT-015).
 - When to introduce Atelier's own agent loop (context as a projection of the log) — after M3.
@@ -473,3 +622,7 @@ the MCP server. Suggested tickets, in order:
     hand-rolled walk over ts-rs output? Leaning towards `schemars`.
   - Is the board's set of columns per project (`.atelier/board.toml`) or simply the distinct ticket statuses?
   - Name: "automations" is the plain word. Keep "workflow" for the multi-step `await` form, if we ever build it.
+- Sessions talking to sessions (§11):
+  - CC ships its own cross-session `SendMessage`/`ListAgents` tools. Disable them in Atelier sessions
+    (`--disallowedTools`) so there is one mechanism, and it's logged? Leaning yes; verify in AT-026's spike.
+  - Should `spawn` be pre-allowed instead of going through the permission mode? Start conservative.

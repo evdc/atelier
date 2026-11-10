@@ -28,8 +28,25 @@ pub async fn prepare(
     mode: WorkspaceMode,
     in_use: &[String],
 ) -> Result<Workspace> {
+    let (ws, fresh) = claim(worktrees_dir, project, session, title, mode, in_use).await?;
+    if fresh {
+        seed(Path::new(&project.path), Path::new(&ws.path)).await;
+    }
+    Ok(ws)
+}
+
+/// Like [`prepare`] but without seeding. The bool says the worktree is brand new and should be passed to
+/// [`seed`]; cloning a large `target/` can take a long time, which callers shouldn't make a user wait on.
+pub async fn claim(
+    worktrees_dir: &Path,
+    project: &ProjectRow,
+    session: &SessionId,
+    title: &str,
+    mode: WorkspaceMode,
+    in_use: &[String],
+) -> Result<(Workspace, bool)> {
     match mode {
-        WorkspaceMode::Direct => Ok(Workspace { mode, path: project.path.clone(), branch: None, base: None }),
+        WorkspaceMode::Direct => Ok((Workspace { mode, path: project.path.clone(), branch: None, base: None }, false)),
         WorkspaceMode::Worktree => {
             if !project.is_git {
                 bail!("{} is not a git repository; use the project directory instead", project.name);
@@ -49,19 +66,14 @@ pub async fn prepare(
             for free in free_worktrees(repo, &pool_dir, in_use).await? {
                 // Ignored files (deps, build output) survive a checkout; that's the point of reusing.
                 if git(&free, &["checkout", "-q", "-b", &branch, &base]).await.is_ok() {
-                    return Ok(Workspace {
-                        mode,
-                        path: free.to_string_lossy().into_owned(),
-                        branch: Some(branch),
-                        base: Some(base),
-                    });
+                    let path = free.to_string_lossy().into_owned();
+                    return Ok((Workspace { mode, path, branch: Some(branch), base: Some(base) }, false));
                 }
             }
             let path = pool_dir.join(short);
             let path_s = path.to_string_lossy().into_owned();
             git(repo, &["worktree", "add", "-b", &branch, &path_s, &base]).await?;
-            seed(repo, &path).await;
-            Ok(Workspace { mode, path: path_s, branch: Some(branch), base: Some(base) })
+            Ok((Workspace { mode, path: path_s, branch: Some(branch), base: Some(base) }, true))
         }
     }
 }
@@ -92,7 +104,7 @@ async fn free_worktrees(repo: &Path, pool_dir: &Path, in_use: &[String]) -> Resu
 
 /// Copy-on-write clone of the project's dependency and build directories into a new worktree, so the agent
 /// can run `make check` immediately. Best effort: without CoW support a full copy would cost more than it saves.
-async fn seed(repo: &Path, worktree: &Path) {
+pub async fn seed(repo: &Path, worktree: &Path) {
     let Ok(ignored) = git(repo, &["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"]).await
     else {
         return;

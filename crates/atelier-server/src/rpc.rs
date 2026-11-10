@@ -45,7 +45,10 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                 let rows = app.store.read(move |c| views::sessions::list(c, Some(&pid))).await?;
                 rows.into_iter().filter(|s| !s.archived).map(|s| s.workspace.path).collect()
             };
-            let ws = workspace::prepare(&app.config.worktrees_dir(), &p, &id, &title, workspace, &in_use).await?;
+            let (ws, fresh) =
+                workspace::claim(&app.config.worktrees_dir(), &p, &id, &title, workspace, &in_use).await?;
+            let repo = p.path.clone();
+            let ws_path = ws.path.clone();
             let s_stream = stream::session(&p.id, &id);
             let created = SessionCreated {
                 id: id.clone(),
@@ -59,7 +62,17 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             };
             app.store.append_one(NewEvent::new(&s_stream, Actor::User, &created)).await?;
             let s = session_row(app, &id).await?;
-            app.supervisor.send(&s, prompt).await?;
+            // Seeding can take a long time on a big repo. The session exists already, so answer now
+            // and start the agent once the worktree is warm.
+            let app = app.clone();
+            tokio::spawn(async move {
+                if fresh {
+                    workspace::seed(std::path::Path::new(&repo), std::path::Path::new(&ws_path)).await;
+                }
+                if let Err(e) = app.supervisor.send(&s, prompt).await {
+                    tracing::error!("starting session {}: {e:#}", s.id.as_str());
+                }
+            });
             Ok(json!({ "id": id, "stream": s_stream }))
         }
         Call::SessionSend { session, text } => {

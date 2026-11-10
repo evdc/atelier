@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { canOpenIn } from "../lib/openin";
 import { LocalServer } from "./LocalServer";
 import { hostServer, serverConfig, type Conn } from "../lib/conn";
@@ -10,6 +10,18 @@ export function connLabel(conn: Conn): string {
     conn.state()
   ];
 }
+
+/** Environment variables that configure the server (`atelierd`), set where it
+ *  runs. Listed by hand: whoever adds one adds a line here. */
+const SERVER_ENV: { name: string; default: string; doc: string }[] = [
+  { name: "ATELIER_HOME", default: "~/.atelier", doc: "Data directory: database, token, worktrees." },
+  { name: "ATELIER_LISTEN", default: "127.0.0.1:7747", doc: "Address the server listens on." },
+  { name: "ATELIER_LISTEN_TAILSCALE", default: "off", doc: "Also listen on the tailnet address (1 to enable)." },
+  { name: "ATELIER_TAILSCALE_BIN", default: "usual locations, then PATH", doc: "The tailscale executable." },
+  { name: "ATELIER_CLAUDE_BIN", default: "claude, from PATH", doc: "The Claude Code executable." },
+  { name: "ATELIER_IDLE_SECS", default: "600", doc: "Idle seconds before an agent process is stopped." },
+  { name: "ATELIER_AUTO_TITLE", default: "on", doc: "Title sessions after their first turn (0 to disable)." },
+];
 
 /** Which server to talk to. With `conn`, also shows how that connection is
  *  doing. Saving probes the address first, so a typo or a refused token is
@@ -114,6 +126,27 @@ export function Settings(props: { conn?: Conn; onClose?: () => void }) {
         From your own devices over Tailscale, none is needed. Otherwise it is in <code>~/.atelier/token</code> on the
         server.
       </p>
+
+      <Show when={props.conn}>
+        <details class="settings-env">
+          <summary>Server environment</summary>
+          <p class="faint">Set these where the server runs, then restart it.</p>
+          <dl>
+            <For each={SERVER_ENV}>
+              {(v) => (
+                <>
+                  <dt>
+                    <code>{v.name}</code>
+                  </dt>
+                  <dd>
+                    {v.doc} <span class="faint">Default: {v.default}.</span>
+                  </dd>
+                </>
+              )}
+            </For>
+          </dl>
+        </details>
+      </Show>
 
       <Show when={error() ?? rejection()}>
         <p class="err">{error() ?? rejection()}</p>

@@ -54,16 +54,45 @@
   padding: 16px;
   background: var(--card);
   border: 1px solid var(--ink);
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
 }
-.foot button.conn {
+.settings-env {
+  border-block: 1px solid var(--line);
+  padding: 8px 0;
+  font-size: 12.5px;
+}
+.settings-env summary {
+  cursor: pointer;
+  color: var(--ink-2);
+}
+.settings-env dl {
+  margin: 8px 0 0;
+  display: grid;
+  gap: 6px;
+}
+.settings-env dt {
+  font: 11.5px var(--f-mono);
+}
+.settings-env dd {
+  margin: 0;
+  color: var(--ink-2);
+}
+.foot-r {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.foot button.gear {
   border: 0;
   background: none;
   padding: 0;
   cursor: pointer;
+  display: flex;
   font-size: inherit;
   color: inherit;
 }
-.foot button.conn:hover span {
+.foot button.gear:hover {
   color: var(--ink);
 }
 .settings-local {

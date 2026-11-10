@@ -13,7 +13,7 @@ use atelier_core::domain::{
     WorkspaceRemoved,
 };
 use atelier_core::{Actor, NewEvent, SessionId, stream};
-use atelier_proto::{Archived, Call, ProjectRow, SessionRow};
+use atelier_proto::{Archived, Call, ProjectRow, SessionRow, SessionStatus};
 use serde_json::{Value, json};
 
 use crate::{App, browse, views, workspace};
@@ -121,6 +121,28 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
         Call::SessionChanges { session } => {
             let s = session_row(app, &session).await?;
             Ok(serde_json::to_value(workspace::changes(&s.workspace).await?)?)
+        }
+        Call::SessionMerge { session } => {
+            let s = session_row(app, &session).await?;
+            if s.archived {
+                bail!("session is archived");
+            }
+            if s.status == SessionStatus::Running || s.status == SessionStatus::Waiting {
+                bail!("wait for the agent to finish its turn before merging");
+            }
+            let p = project_row(app, s.project.as_str()).await?;
+            let r = workspace::merge(&p, &s.workspace, &s.title).await?;
+            if !r.merged {
+                let list = r.conflicts.iter().map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n");
+                let text = format!(
+                    "Merging `{}` into this branch hit conflicts, left in progress in the worktree:\n{list}\n\n\
+                     Resolve them (keep both sides' intent), `git add` the files and run `git commit --no-edit`. \
+                     Don't abort the merge.",
+                    r.target
+                );
+                app.supervisor.send(&s, text).await?;
+            }
+            Ok(serde_json::to_value(r)?)
         }
         Call::SessionDiff { session, path } => {
             let s = session_row(app, &session).await?;

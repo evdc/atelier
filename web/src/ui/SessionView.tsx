@@ -5,7 +5,7 @@ import { createTranscript } from "../agents/transcript";
 import { back, go } from "../lib/router";
 import { tokens, usd } from "../lib/time";
 import { panelMode, setPanelMode, togglePanel } from "../lib/panel";
-import { ChangesList, createChanges, OpenIn, totals } from "./Changes";
+import { ChangesList, createChanges, MergeButton, OpenIn, totals } from "./Changes";
 import { Composer } from "./Composer";
 import { useApp } from "./context";
 import { TranscriptView } from "./Transcript";
@@ -20,7 +20,7 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
   const [renaming, setRenaming] = createSignal(false);
   const [draft, setDraft] = createSignal("");
 
-  const changes = createChanges(s);
+  const [changes, refreshChanges] = createChanges(s);
   const sum = () => totals(changes());
 
   const act = (p: Promise<unknown>) => p.catch((e: Error) => setError(e.message));
@@ -107,6 +107,8 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
           </button>
         </Show>
         <OpenIn row={s} />
+        {/* The side panel is hidden on narrow screens, so the header carries it there. */}
+        <MergeButton class="in-header" row={s} refresh={refreshChanges} />
         <button
           class="btn quiet panel-toggle"
           aria-pressed={panelMode() !== "closed"}
@@ -165,6 +167,7 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
           </div>
           <section>
             <h4 class="cap">Changes</h4>
+            <MergeButton row={s} refresh={refreshChanges} />
             <ChangesList session={s().id} changes={changes()} />
           </section>
           <Show when={s().workspace.branch}>

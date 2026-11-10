@@ -35,6 +35,12 @@ The server watches `.atelier/`; file changes are appended as events, so the log 
   proposals) is scoped to a project. Only sessions in added projects are imported from CC history (AT-004).
 - **[decided] Workspaces.** Each new session gets its own git worktree by default (`~/.atelier/worktrees/<project>/<id>`,
   branch `atelier/<slug>-<id>`); the new-session form can choose the project directory instead.
+  **[decided] Worktree pool.** Archiving a clean session detaches its worktree and keeps it (at most 3 per project)
+  instead of deleting it; the next session claims one with `git checkout -b`, so `target/` and `node_modules/` stay
+  warm. A fresh worktree gets `target`, `node_modules` and `.venv` copy-on-write cloned from the project checkout
+  (best effort, needs APFS/reflink). Pool membership is derived from git (detached, clean, under the project's
+  worktrees dir, no live session) — no extra state. We re-implemented rather than depend on treehouse: it's ~100
+  lines and has to share the archive/safety logic.
 
 **[decided] Server as its own process, not in-process with the UI.** The app launches `atelierd` detached (later: as a launchd agent, AT-011) and connects to it over the same WebSocket protocol the phone uses. Consequences:
 - Closing the desktop window doesn't kill running agents — essential if the phone is meant to keep working.

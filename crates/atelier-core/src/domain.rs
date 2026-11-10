@@ -99,14 +99,17 @@ kind!(SessionRenamed, "session.renamed");
 pub struct SessionArchived {}
 kind!(SessionArchived, "session.archived");
 
-/// A session's worktree and branch were deleted (on archive, when nothing
-/// would be lost).
+/// A session's branch was deleted and it let go of its worktree (on archive, when nothing
+/// would be lost). The directory is deleted too unless `pooled`, in which case it waits,
+/// detached, for the next session.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct WorkspaceRemoved {
     pub path: String,
     #[serde(default)]
     pub branch: Option<String>,
+    #[serde(default)]
+    pub pooled: bool,
 }
 kind!(WorkspaceRemoved, "workspace.removed");
 

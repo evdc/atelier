@@ -33,11 +33,19 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             app.store.append_one(NewEvent::new(stream::GLOBAL, Actor::User, &ProjectRemoved { id: p.id })).await?;
             Ok(Value::Null)
         }
-        Call::SessionCreate { project, prompt, workspace, title, model } => {
+        Call::SessionCreate { project, prompt, workspace, title, model, from } => {
             let p = project_row(app, project.as_str()).await?;
             if prompt.trim().is_empty() {
                 bail!("the first message can't be empty");
             }
+            let source = match (&from, workspace) {
+                (None, WorkspaceMode::Shared) => bail!("sharing a worktree needs the session to share"),
+                (None, _) => None,
+                (Some(_), WorkspaceMode::Direct) => {
+                    bail!("the project directory has no worktree of its own to share or branch from")
+                }
+                (Some(f), _) => Some(source_session(app, &p, f).await?),
+            };
             let id = SessionId::generate();
             let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| title_from(&prompt));
             let in_use: Vec<String> = {
@@ -45,9 +53,43 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                 let rows = app.store.read(move |c| views::sessions::list(c, Some(&pid))).await?;
                 rows.into_iter().filter(|s| !s.archived).map(|s| s.workspace.path).collect()
             };
-            let (ws, fresh) =
-                workspace::claim(&app.config.worktrees_dir(), &p, &id, &title, workspace, &in_use).await?;
-            let repo = p.path.clone();
+            // (workspace, whether to seed it from `seed_from`)
+            let (ws, seed_from) = match &source {
+                Some(owner) if workspace == WorkspaceMode::Shared => {
+                    (workspace::share(&owner.workspace, &owner.id), None)
+                }
+                Some(owner) => {
+                    // Branch from a snapshot of the owner's working tree; the owner itself is never touched.
+                    let snap = workspace::snapshot(&owner.workspace, &title, &id).await?;
+                    match workspace::claim(
+                        &app.config.worktrees_dir(),
+                        &p,
+                        &id,
+                        &title,
+                        workspace,
+                        &in_use,
+                        Some(&snap),
+                    )
+                    .await
+                    {
+                        Ok((mut ws, fresh)) => {
+                            ws.from = Some(owner.id.clone());
+                            ws.snapshot = Some(snap);
+                            (ws, fresh.then(|| owner.workspace.path.clone()))
+                        }
+                        Err(e) => {
+                            workspace::drop_snapshot(std::path::Path::new(&p.path), &snap).await;
+                            return Err(e);
+                        }
+                    }
+                }
+                None => {
+                    let (ws, fresh) =
+                        workspace::claim(&app.config.worktrees_dir(), &p, &id, &title, workspace, &in_use, None)
+                            .await?;
+                    (ws, fresh.then(|| p.path.clone()))
+                }
+            };
             let ws_path = ws.path.clone();
             let s_stream = stream::session(&p.id, &id);
             let created = SessionCreated {
@@ -66,8 +108,8 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             // and start the agent once the worktree is warm.
             let app = app.clone();
             tokio::spawn(async move {
-                if fresh {
-                    workspace::seed(std::path::Path::new(&repo), std::path::Path::new(&ws_path)).await;
+                if let Some(src) = seed_from {
+                    workspace::seed(std::path::Path::new(&src), std::path::Path::new(&ws_path)).await;
                 }
                 if let Err(e) = app.supervisor.send(&s, prompt).await {
                     tracing::error!("starting session {}: {e:#}", s.id.as_str());
@@ -118,23 +160,26 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             app.supervisor.stop(&s.id);
             app.store.append_one(NewEvent::new(&s.stream, Actor::User, &SessionArchived {})).await?;
             let mut result = Archived { removed: false, kept: None };
-            if s.workspace.mode == WorkspaceMode::Worktree && !s.archived {
+            if !s.archived {
                 let p = project_row(app, s.project.as_str()).await?;
-                match workspace::unsafe_to_remove(&p, &s.workspace).await {
-                    Ok(None) => match workspace::release(&p, &s.workspace).await {
-                        Ok(pooled) => {
-                            let gone = WorkspaceRemoved {
-                                path: s.workspace.path.clone(),
-                                branch: s.workspace.branch.clone(),
-                                pooled,
-                            };
-                            app.store.append_one(NewEvent::new(&s.stream, Actor::User, &gone)).await?;
-                            result.removed = true;
-                        }
-                        Err(e) => result.kept = Some(format!("couldn't remove the worktree: {e}")),
+                match s.workspace.mode {
+                    WorkspaceMode::Worktree => match readers_of(app, &s).await?.first() {
+                        // The worktree outlives its owner while someone reads it; the last reader to leave
+                        // releases it (see the `Shared` arm).
+                        Some(r) => result.kept = Some(format!("{} is reading this worktree", r.title)),
+                        None => result = remove_worktree(app, &p, &s).await?,
                     },
-                    Ok(Some(why)) => result.kept = Some(why),
-                    Err(e) => result.kept = Some(format!("couldn't inspect the worktree: {e}")),
+                    WorkspaceMode::Shared => {
+                        // A reader never touches the worktree; the last one out releases an archived owner's.
+                        let owner_id = s.workspace.from.clone().context("a shared workspace without its owner")?;
+                        let owner = session_row(app, &owner_id).await?;
+                        let oid = owner_id.as_str().to_owned();
+                        let gone = app.store.read(move |c| views::sessions::worktree_removed(c, &oid)).await?;
+                        if owner.archived && !gone && readers_of(app, &owner).await?.is_empty() {
+                            result = remove_worktree(app, &p, &owner).await?;
+                        }
+                    }
+                    WorkspaceMode::Direct => {}
                 }
             }
             Ok(serde_json::to_value(result)?)
@@ -183,6 +228,66 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
         Call::FsList { path, hidden } => Ok(serde_json::to_value(browse::list(path, hidden.unwrap_or(false)).await?)?),
         Call::FsSuggest {} => Ok(serde_json::to_value(browse::suggest().await?)?),
     }
+}
+
+/// The session a new session starts from: `from` itself, or the owner of the worktree when `from` is a reader.
+async fn source_session(app: &App, p: &ProjectRow, from: &SessionId) -> Result<SessionRow> {
+    let s = session_row(app, from).await?;
+    if s.project.as_str() != p.id.as_str() {
+        bail!("{} is in another project", s.title);
+    }
+    if s.archived {
+        bail!("{} is archived", s.title);
+    }
+    let owner = if s.workspace.mode == WorkspaceMode::Shared {
+        let owner_id = s.workspace.from.clone().context("a shared workspace without its owner")?;
+        let owner = session_row(app, &owner_id).await?;
+        if owner.archived {
+            bail!("{} is archived, so its worktree is only kept for the sessions reading it", owner.title);
+        }
+        owner
+    } else {
+        s
+    };
+    if owner.workspace.mode != WorkspaceMode::Worktree {
+        bail!(
+            "{} works in the project directory, which has no worktree of its own to share or branch from",
+            owner.title
+        );
+    }
+    Ok(owner)
+}
+
+/// Live sessions reading `owner`'s worktree.
+async fn readers_of(app: &App, owner: &SessionRow) -> Result<Vec<SessionRow>> {
+    let (pid, oid) = (owner.project.as_str().to_owned(), owner.id.as_str().to_owned());
+    let rows = app.store.read(move |c| views::sessions::list(c, Some(&pid))).await?;
+    Ok(rows
+        .into_iter()
+        .filter(|r| {
+            !r.archived
+                && r.workspace.mode == WorkspaceMode::Shared
+                && r.workspace.from.as_ref().is_some_and(|f| f.as_str() == oid)
+        })
+        .collect())
+}
+
+/// Deletes the worktree of `s` if nothing in it would be lost, and records the removal on `s`'s stream.
+async fn remove_worktree(app: &App, p: &ProjectRow, s: &SessionRow) -> Result<Archived> {
+    let kept = match workspace::unsafe_to_remove(p, &s.workspace).await {
+        Ok(None) => match workspace::release(p, &s.workspace).await {
+            Ok(pooled) => {
+                let gone =
+                    WorkspaceRemoved { path: s.workspace.path.clone(), branch: s.workspace.branch.clone(), pooled };
+                app.store.append_one(NewEvent::new(&s.stream, Actor::User, &gone)).await?;
+                return Ok(Archived { removed: true, kept: None });
+            }
+            Err(e) => format!("couldn't remove the worktree: {e}"),
+        },
+        Ok(Some(why)) => why,
+        Err(e) => format!("couldn't inspect the worktree: {e}"),
+    };
+    Ok(Archived { removed: false, kept: Some(kept) })
 }
 
 async fn project_add(app: &App, path: String, name: Option<String>) -> Result<Value> {

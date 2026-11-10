@@ -102,6 +102,11 @@ pub enum Call {
         #[serde(default)]
         #[ts(optional)]
         model: Option<String>,
+        /// The session whose worktree this one shares (`workspace: shared`) or branches from
+        /// (`workspace: worktree`). Required for `shared`; refused for `direct`.
+        #[serde(default)]
+        #[ts(optional)]
+        from: Option<SessionId>,
     },
     /// Send a message; starts (or resumes) the agent process if needed.
     #[serde(rename = "session.send")]

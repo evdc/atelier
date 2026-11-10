@@ -2,7 +2,8 @@ import { createSignal, Show, type Accessor } from "solid-js";
 import type { Archived } from "../gen/Archived";
 import type { SessionRow } from "../gen/SessionRow";
 import { createTranscript } from "../agents/transcript";
-import { back, go } from "../lib/router";
+import { back, go, href } from "../lib/router";
+import { prefillNewSession, readersOf, reviewPrompt, reviewTitle, shortCommit } from "../lib/review";
 import { tokens, usd } from "../lib/time";
 import { panelMode, setPanelMode, togglePanel } from "../lib/panel";
 import { ChangesList, createChanges, MergeButton, OpenIn, totals } from "./Changes";
@@ -11,7 +12,7 @@ import { useApp } from "./context";
 import { TranscriptView } from "./Transcript";
 
 export function SessionView(props: { row: Accessor<SessionRow> }) {
-  const { conn } = useApp();
+  const { conn, sessions } = useApp();
   const s = props.row;
   // Captured once: the view is keyed by session id, so the stream is fixed.
   const live = createTranscript(conn, s().stream);
@@ -22,6 +23,20 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
 
   const [changes, refreshChanges] = createChanges(s);
   const sum = () => totals(changes());
+  // The owner of a shared or branched workspace, when it's still in the list.
+  const source = () => (s().workspace.from ? sessions.get(s().workspace.from as string) : undefined);
+  const sourceName = () => source()?.title ?? "another session";
+  const readers = () => readersOf(sessions.list(), s().id);
+  const reviewChanges = () => {
+    const ws = s().workspace;
+    prefillNewSession({
+      source: "share",
+      from: s().id,
+      title: reviewTitle(s().title),
+      prompt: reviewPrompt({ title: s().title, base: ws.base, branch: ws.branch }),
+    });
+    go({ name: "sessions", project: s().project, creating: true });
+  };
 
   const act = (p: Promise<unknown>) => p.catch((e: Error) => setError(e.message));
   const busy = () => s().status === "running" || s().status === "waiting";
@@ -114,6 +129,11 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
           </button>
         </Show>
         <OpenIn row={s} />
+        <Show when={s().workspace.mode === "worktree" && sum().files > 0}>
+          <button class="btn quiet" title="Start a fresh session that reviews this worktree's changes" onClick={reviewChanges}>
+            Review changes
+          </button>
+        </Show>
         {/* The side panel is hidden on narrow screens, so the header carries it there. */}
         <MergeButton class="in-header" row={s} refresh={refreshChanges} />
         <button
@@ -131,6 +151,35 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
           <Show when={s().workspace.branch} fallback={<span>project directory</span>}>
             <span>
               worktree <code>{s().workspace.branch}</code>
+            </span>
+          </Show>
+          <Show when={s().workspace.mode === "shared"}>
+            <span class="prov">
+              reading{" "}
+              <a href={href({ name: "sessions", project: s().project, session: s().workspace.from ?? undefined })}>
+                "{sourceName()}"
+              </a>
+              's worktree
+            </span>
+          </Show>
+          <Show when={s().workspace.mode === "worktree" && s().workspace.snapshot}>
+            <span class="prov">
+              branched from{" "}
+              <a href={href({ name: "sessions", project: s().project, session: s().workspace.from ?? undefined })}>
+                "{sourceName()}"
+              </a>{" "}
+              at <code>{shortCommit(s().workspace.snapshot ?? "")}</code>
+            </span>
+          </Show>
+          <Show when={readers().length}>
+            <span class="prov">
+              read by{" "}
+              {readers().map((r, i) => (
+                <>
+                  {i > 0 ? ", " : ""}
+                  <a href={href({ name: "sessions", project: s().project, session: r.id })}>"{r.title}"</a>
+                </>
+              ))}
             </span>
           </Show>
           <span>{s().turns === 1 ? "1 turn" : `${s().turns} turns`}</span>
@@ -173,7 +222,7 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
             </button>
           </div>
           <section>
-            <h4 class="cap">Changes</h4>
+            <h4 class="cap">{s().workspace.mode === "shared" ? `${sourceName()}'s changes` : "Changes"}</h4>
             <MergeButton row={s} refresh={refreshChanges} />
             <ChangesList session={s().id} changes={changes()} />
           </section>

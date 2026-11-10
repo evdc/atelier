@@ -19,7 +19,8 @@ const SEED_DIRS: &[&str] = &["target", "node_modules", ".venv"];
 /// Serializes claiming and releasing pool entries, so two sessions never get the same directory.
 static POOL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// `in_use` is every path a live (unarchived) session runs in.
+/// `in_use` is every path a live (unarchived) session runs in; `start` is the commit a new worktree begins at
+/// (`None` for the project's HEAD).
 pub async fn prepare(
     worktrees_dir: &Path,
     project: &ProjectRow,
@@ -27,8 +28,9 @@ pub async fn prepare(
     title: &str,
     mode: WorkspaceMode,
     in_use: &[String],
+    start: Option<&str>,
 ) -> Result<Workspace> {
-    let (ws, fresh) = claim(worktrees_dir, project, session, title, mode, in_use).await?;
+    let (ws, fresh) = claim(worktrees_dir, project, session, title, mode, in_use, start).await?;
     if fresh {
         seed(Path::new(&project.path), Path::new(&ws.path)).await;
     }
@@ -44,17 +46,25 @@ pub async fn claim(
     title: &str,
     mode: WorkspaceMode,
     in_use: &[String],
+    start: Option<&str>,
 ) -> Result<(Workspace, bool)> {
     match mode {
-        WorkspaceMode::Direct => Ok((Workspace { mode, path: project.path.clone(), branch: None, base: None }, false)),
+        WorkspaceMode::Direct => Ok((
+            Workspace { mode, path: project.path.clone(), branch: None, base: None, from: None, snapshot: None },
+            false,
+        )),
+        WorkspaceMode::Shared => bail!("a shared workspace is another session's worktree; there's nothing to claim"),
         WorkspaceMode::Worktree => {
             if !project.is_git {
                 bail!("{} is not a git repository; use the project directory instead", project.name);
             }
             let repo = Path::new(&project.path);
-            let base = git(repo, &["rev-parse", "HEAD"])
-                .await
-                .context("the repository has no commits yet; use the project directory instead")?;
+            let base = match start {
+                Some(commit) => commit.to_owned(),
+                None => git(repo, &["rev-parse", "HEAD"])
+                    .await
+                    .context("the repository has no commits yet; use the project directory instead")?,
+            };
             let short = short_id(session);
             let branch = format!("atelier/{}-{short}", slug(title));
             let pool_dir = worktrees_dir.join(project.id.as_str());
@@ -67,14 +77,76 @@ pub async fn claim(
                 // Ignored files (deps, build output) survive a checkout; that's the point of reusing.
                 if git(&free, &["checkout", "-q", "-b", &branch, &base]).await.is_ok() {
                     let path = free.to_string_lossy().into_owned();
-                    return Ok((Workspace { mode, path, branch: Some(branch), base: Some(base) }, false));
+                    return Ok((worktree(mode, path, &branch, base), false));
                 }
             }
             let path = pool_dir.join(short);
             let path_s = path.to_string_lossy().into_owned();
             git(repo, &["worktree", "add", "-b", &branch, &path_s, &base]).await?;
-            Ok((Workspace { mode, path: path_s, branch: Some(branch), base: Some(base) }, true))
+            Ok((worktree(mode, path_s, &branch, base), true))
         }
+    }
+}
+
+fn worktree(mode: WorkspaceMode, path: String, branch: &str, base: String) -> Workspace {
+    Workspace { mode, path, branch: Some(branch.to_owned()), base: Some(base), from: None, snapshot: None }
+}
+
+/// Another session's workspace, read-only: the same directory, branch and base, owned by `owner`.
+pub fn share(owner: &Workspace, owner_id: &SessionId) -> Workspace {
+    Workspace {
+        mode: WorkspaceMode::Shared,
+        path: owner.path.clone(),
+        branch: owner.branch.clone(),
+        base: owner.base.clone(),
+        from: Some(owner_id.clone()),
+        snapshot: None,
+    }
+}
+
+/// Commits the working tree of `ws` as it is now, uncommitted and untracked (non-ignored) files included. A
+/// temporary index does the staging, so the source's index, HEAD and files are untouched. A clean tree is just
+/// HEAD. The commit stays alive through `refs/atelier/snap/<session>` until [`release`] drops it.
+pub async fn snapshot(ws: &Workspace, title: &str, session: &SessionId) -> Result<String> {
+    let dir = Path::new(&ws.path);
+    let head = git(dir, &["rev-parse", "HEAD"]).await.context("the session's worktree has no commits yet")?;
+    let index = std::env::temp_dir().join(format!("atelier-snapshot-{}.index", session.as_str()));
+    let tree = write_tree(dir, &index).await;
+    let _ = tokio::fs::remove_file(&index).await;
+    let tree = tree?;
+    if tree == git(dir, &["rev-parse", "HEAD^{tree}"]).await? {
+        return Ok(head);
+    }
+    let message = format!("atelier: snapshot of {title} ({})", session.as_str());
+    let commit = git_env(dir, SNAPSHOT_IDENTITY, &["commit-tree", &tree, "-p", &head, "-m", &message]).await?;
+    git(dir, &["update-ref", &format!("refs/atelier/snap/{}", session.as_str()), &commit]).await?;
+    Ok(commit)
+}
+
+/// Commit identity for snapshots, which must not depend on the user's git config.
+const SNAPSHOT_IDENTITY: &[(&str, &str)] = &[
+    ("GIT_AUTHOR_NAME", "Atelier"),
+    ("GIT_AUTHOR_EMAIL", "atelier@localhost"),
+    ("GIT_COMMITTER_NAME", "Atelier"),
+    ("GIT_COMMITTER_EMAIL", "atelier@localhost"),
+];
+
+async fn write_tree(dir: &Path, index: &Path) -> Result<String> {
+    let index = index.to_string_lossy();
+    let env = [("GIT_INDEX_FILE", index.as_ref())];
+    git_env_raw(dir, &env, &["read-tree", "HEAD"]).await?;
+    git_env_raw(dir, &env, &["add", "-A"]).await?;
+    git_env(dir, &env, &["write-tree"]).await
+}
+
+/// Removes the snapshot refs that point at `commit`, so the commit can be garbage-collected. Best effort.
+pub async fn drop_snapshot(repo: &Path, commit: &str) {
+    let at = format!("--points-at={commit}");
+    let Ok(refs) = git_raw(repo, &["for-each-ref", "--format=%(refname)", &at, "refs/atelier/snap/"]).await else {
+        return;
+    };
+    for r in refs.lines() {
+        let _ = git(repo, &["update-ref", "-d", r]).await;
     }
 }
 
@@ -246,6 +318,9 @@ pub async fn release(project: &ProjectRow, ws: &Workspace) -> Result<bool> {
         // -D: we've checked it's merged or empty, but not necessarily into the current branch.
         git(repo, &["branch", "-D", branch]).await?;
     }
+    if let Some(snap) = &ws.snapshot {
+        drop_snapshot(repo, snap).await;
+    }
     Ok(pooled)
 }
 
@@ -316,12 +391,22 @@ async fn git(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(git_raw(dir, args).await?.trim().to_owned())
 }
 
+/// Like [`git`], with extra environment variables.
+async fn git_env(dir: &Path, env: &[(&str, &str)], args: &[&str]) -> Result<String> {
+    Ok(git_env_raw(dir, env, args).await?.trim().to_owned())
+}
+
 /// Like [`git`] but keeps whitespace (diffs end in a newline that matters).
 async fn git_raw(dir: &Path, args: &[&str]) -> Result<String> {
+    git_env_raw(dir, &[], args).await
+}
+
+async fn git_env_raw(dir: &Path, env: &[(&str, &str)], args: &[&str]) -> Result<String> {
     let out = Command::new("git")
         .args(["-c", "core.quotepath=false", "-C"])
         .arg(dir)
         .args(args)
+        .envs(env.iter().copied())
         .output()
         .await
         .context("running git")?;
@@ -397,7 +482,7 @@ mod tests {
             waiting: 0,
         };
         let wt = tmp.path().join("worktrees");
-        let ws = prepare(&wt, &project, &SessionId::generate(), "m", WorkspaceMode::Worktree, &[]).await.unwrap();
+        let ws = prepare(&wt, &project, &SessionId::generate(), "m", WorkspaceMode::Worktree, &[], None).await.unwrap();
         let dir = PathBuf::from(&ws.path);
         // Git config for commits made by `merge` itself.
         sh(&dir, &["config", "user.email", "t@t"]).await;
@@ -451,7 +536,7 @@ mod tests {
         };
         let wt = tmp.path().join("worktrees");
         let (s1, s2) = (SessionId::generate(), SessionId::generate());
-        let a = prepare(&wt, &project, &s1, "one", WorkspaceMode::Worktree, &[]).await.unwrap();
+        let a = prepare(&wt, &project, &s1, "one", WorkspaceMode::Worktree, &[], None).await.unwrap();
         let a_path = PathBuf::from(&a.path);
         // Seeding is best effort (needs copy-on-write), so only check what it must not break.
         if a_path.join("target/artifact").exists() {
@@ -459,8 +544,9 @@ mod tests {
         }
 
         // Still in use: a second session gets its own directory.
-        let b =
-            prepare(&wt, &project, &s2, "two", WorkspaceMode::Worktree, std::slice::from_ref(&a.path)).await.unwrap();
+        let b = prepare(&wt, &project, &s2, "two", WorkspaceMode::Worktree, std::slice::from_ref(&a.path), None)
+            .await
+            .unwrap();
         assert_ne!(a.path, b.path);
 
         // Released, it's reused and keeps ignored files.
@@ -474,10 +560,159 @@ mod tests {
             "three",
             WorkspaceMode::Worktree,
             std::slice::from_ref(&b.path),
+            None,
         )
         .await
         .unwrap();
         assert_eq!(c.path, a.path);
         assert!(a_path.join("target/warm").exists());
+    }
+
+    /// A repo with one commit, a gitignored file, and a dependency directory that the tests can seed from.
+    async fn repo_with_history(dir: &Path) -> ProjectRow {
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        sh(&repo, &["init", "-q"]).await;
+        std::fs::write(repo.join(".gitignore"), "ignored.log\ntarget/\n").unwrap();
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        sh(&repo, &["add", "."]).await;
+        sh(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]).await;
+        ProjectRow {
+            id: atelier_core::ProjectId("p1".into()),
+            name: "repo".into(),
+            path: repo.to_string_lossy().into_owned(),
+            is_git: true,
+            added_at: 0,
+            updated_at: 0,
+            sessions: 0,
+            running: 0,
+            waiting: 0,
+        }
+    }
+
+    fn ws_at(path: &Path) -> Workspace {
+        Workspace {
+            mode: WorkspaceMode::Worktree,
+            path: path.to_string_lossy().into_owned(),
+            branch: None,
+            base: None,
+            from: None,
+            snapshot: None,
+        }
+    }
+
+    async fn out(dir: &Path, args: &[&str]) -> String {
+        git(dir, args).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn snapshot_has_working_tree_and_leaves_the_source_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = repo_with_history(tmp.path()).await;
+        let repo = PathBuf::from(&project.path);
+        std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap(); // modified, unstaged
+        std::fs::write(repo.join("staged.txt"), "s\n").unwrap();
+        sh(&repo, &["add", "staged.txt"]).await; // staged
+        std::fs::write(repo.join("new.txt"), "n\n").unwrap(); // untracked
+        std::fs::write(repo.join("ignored.log"), "x\n").unwrap(); // ignored
+        let (head, index, status) = (
+            out(&repo, &["rev-parse", "HEAD"]).await,
+            out(&repo, &["ls-files", "-s"]).await,
+            out(&repo, &["status", "--porcelain"]).await,
+        );
+
+        let id = SessionId::generate();
+        let commit = snapshot(&ws_at(&repo), "work", &id).await.unwrap();
+
+        assert_ne!(commit, head);
+        let files = out(&repo, &["ls-tree", "-r", "--name-only", &commit]).await;
+        assert!(files.contains("a.txt") && files.contains("staged.txt") && files.contains("new.txt"), "{files}");
+        assert!(!files.contains("ignored.log"), "{files}");
+        assert_eq!(out(&repo, &["rev-parse", "HEAD"]).await, head);
+        assert_eq!(out(&repo, &["ls-files", "-s"]).await, index);
+        assert_eq!(out(&repo, &["status", "--porcelain"]).await, status);
+        let r = format!("refs/atelier/snap/{}", id.as_str());
+        assert_eq!(out(&repo, &["rev-parse", &r]).await, commit);
+    }
+
+    #[tokio::test]
+    async fn snapshot_of_a_clean_tree_is_head() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = repo_with_history(tmp.path()).await;
+        let repo = PathBuf::from(&project.path);
+        let head = out(&repo, &["rev-parse", "HEAD"]).await;
+        assert_eq!(snapshot(&ws_at(&repo), "clean", &SessionId::generate()).await.unwrap(), head);
+    }
+
+    #[tokio::test]
+    async fn branch_from_a_snapshot_starts_with_empty_changes_and_release_drops_the_ref() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = repo_with_history(tmp.path()).await;
+        let wt = tmp.path().join("worktrees");
+        let owner =
+            prepare(&wt, &project, &SessionId::generate(), "owner", WorkspaceMode::Worktree, &[], None).await.unwrap();
+        let owner_dir = PathBuf::from(&owner.path);
+        std::fs::write(owner_dir.join("a.txt"), "owner's edit\n").unwrap();
+
+        let (owner_id, child_id) = (SessionId::generate(), SessionId::generate());
+        let commit = snapshot(&owner, "owner", &child_id).await.unwrap();
+        let (mut child, fresh) =
+            claim(&wt, &project, &child_id, "child", WorkspaceMode::Worktree, &[], Some(&commit)).await.unwrap();
+        assert!(fresh);
+        child.from = Some(owner_id.clone());
+        child.snapshot = Some(commit.clone());
+
+        assert_eq!(child.base.as_deref(), Some(commit.as_str()));
+        assert!(changes(&child).await.unwrap().files.is_empty());
+        // The child starts with the owner's uncommitted edit, and the owner keeps its own.
+        assert_eq!(std::fs::read_to_string(PathBuf::from(&child.path).join("a.txt")).unwrap(), "owner's edit\n");
+        assert_eq!(std::fs::read_to_string(owner_dir.join("a.txt")).unwrap(), "owner's edit\n");
+
+        let r = format!("refs/atelier/snap/{}", child_id.as_str());
+        assert!(!out(Path::new(&project.path), &["for-each-ref", &r]).await.is_empty());
+        assert!(release(&project, &child).await.unwrap());
+        assert!(out(Path::new(&project.path), &["for-each-ref", &r]).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn seed_copies_dependencies_from_the_source_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = repo_with_history(tmp.path()).await;
+        let wt = tmp.path().join("worktrees");
+        let owner =
+            prepare(&wt, &project, &SessionId::generate(), "owner", WorkspaceMode::Worktree, &[], None).await.unwrap();
+        let owner_dir = PathBuf::from(&owner.path);
+        // Only the owner has this: a build product the project checkout doesn't.
+        std::fs::create_dir_all(owner_dir.join("target")).unwrap();
+        std::fs::write(owner_dir.join("target/owner-only"), "b").unwrap();
+
+        let commit = snapshot(&owner, "owner", &SessionId::generate()).await.unwrap();
+        let (child, _) =
+            claim(&wt, &project, &SessionId::generate(), "child", WorkspaceMode::Worktree, &[], Some(&commit))
+                .await
+                .unwrap();
+        seed(&owner_dir, Path::new(&child.path)).await;
+        // Copy-on-write cloning is best effort (see `seed`); macOS has `cp -c`, so there it must work.
+        if cfg!(target_os = "macos") {
+            assert!(Path::new(&child.path).join("target/owner-only").exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn sharing_uses_the_owners_directory_and_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = repo_with_history(tmp.path()).await;
+        let wt = tmp.path().join("worktrees");
+        let owner =
+            prepare(&wt, &project, &SessionId::generate(), "owner", WorkspaceMode::Worktree, &[], None).await.unwrap();
+        let owner_id = SessionId::generate();
+        let shared = share(&owner, &owner_id);
+        assert_eq!(shared.mode, WorkspaceMode::Shared);
+        assert_eq!(
+            (shared.path, shared.branch, shared.base),
+            (owner.path.clone(), owner.branch.clone(), owner.base.clone())
+        );
+        assert_eq!(shared.from.as_ref(), Some(&owner_id));
+        assert!(claim(&wt, &project, &SessionId::generate(), "x", WorkspaceMode::Shared, &[], None).await.is_err());
     }
 }

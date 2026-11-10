@@ -236,8 +236,13 @@ impl Supervisor {
             Some(native_id) => Resume::Continue { native_id },
             None => Resume::New,
         };
-        let spec =
-            StartSpec { session: s.id.clone(), cwd: PathBuf::from(&s.workspace.path), resume, model: s.model.clone() };
+        let spec = StartSpec {
+            session: s.id.clone(),
+            cwd: PathBuf::from(&s.workspace.path),
+            resume,
+            model: s.model.clone(),
+            read_only: s.workspace.mode == WorkspaceMode::Shared,
+        };
 
         let handle = match self.inner.driver.start(spec) {
             Ok(h) => h,

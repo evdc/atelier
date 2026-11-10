@@ -74,6 +74,7 @@ async fn drives_a_process_end_to_end() {
             cwd: std::env::temp_dir(),
             resume: Resume::New,
             model: None,
+            read_only: false,
         })
         .unwrap();
     h.cmds.send(AgentCmd::Send("hello".into())).unwrap();

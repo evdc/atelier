@@ -35,6 +35,8 @@ pub struct StartSpec {
     pub cwd: PathBuf,
     pub resume: Resume,
     pub model: Option<String>,
+    /// The workspace belongs to another session: no edits, and a note saying so.
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -581,6 +581,11 @@
   color: var(--ink-2);
 }
 
+/* Where a session's workspace came from: quiet, and gold because it's worth noticing. */
+.sh .meta .prov {
+  color: var(--gold);
+}
+
 .tx {
   padding: 18px 18px 8px;
   display: grid;

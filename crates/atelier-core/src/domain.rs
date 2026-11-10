@@ -59,6 +59,8 @@ pub enum WorkspaceMode {
     Worktree,
     /// The project directory itself.
     Direct,
+    /// Another session's worktree, read-only.
+    Shared,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -72,6 +74,12 @@ pub struct Workspace {
     /// Commit the worktree was created from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
+    /// The session this workspace came from: the owner for `Shared`, the snapshot source for a branched `Worktree`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<SessionId>,
+    /// For a branched `Worktree`, the snapshot commit it started from (also its `base`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

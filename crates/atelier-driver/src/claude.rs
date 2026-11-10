@@ -84,6 +84,14 @@ impl ClaudeCode {
         if let Some(model) = &spec.model {
             cmd.args(["--model", model]);
         }
+        if spec.read_only {
+            // A convention backed by the permission mode, not a sandbox: Bash can still write.
+            cmd.args(["--disallowedTools", "Edit,Write,NotebookEdit"]);
+            cmd.args([
+                "--append-system-prompt",
+                "You are in another session's worktree, read-only. Don't modify tracked files; build and test output is fine.",
+            ]);
+        }
         // Agents run in their own worktree; build-tool env inherited from wherever atelierd was started
         // would point their cargo runs back at another checkout.
         cmd.env_remove("TS_RS_EXPORT_DIR");

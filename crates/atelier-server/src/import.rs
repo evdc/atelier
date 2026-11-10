@@ -111,6 +111,8 @@ async fn import_file(app: &App, p: &ProjectRow, cwds: &[PathBuf], file: &Path) -
                 agent: AgentKind::ClaudeCode,
                 workspace: Workspace {
                     mode: WorkspaceMode::Direct,
+                    from: None,
+                    snapshot: None,
                     path: cwd.unwrap_or_else(|| PathBuf::from(&p.path)).to_string_lossy().into_owned(),
                     branch: scan.branch.clone(),
                     base: None,

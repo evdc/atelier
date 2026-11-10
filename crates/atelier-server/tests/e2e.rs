@@ -2,7 +2,7 @@
 //! (`atelier-driver/tests/fixtures/fake-claude.sh`).
 
 use std::net::{IpAddr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -88,6 +88,12 @@ fn git(dir: &Path, args: &[&str]) {
 fn git_out(dir: &Path, args: &[&str]) -> String {
     let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+fn git_out_path(dir: &Path, arg: &str) -> PathBuf {
+    let out = git_out(dir, &["rev-parse", arg]);
+    let p = PathBuf::from(&out);
+    if p.is_absolute() { p } else { dir.join(p) }
 }
 
 fn session_row_matches(m: &Value, pred: impl Fn(&Value) -> bool) -> bool {
@@ -492,6 +498,110 @@ async fn tailnet_peers_and_tokens() {
     assert!(refused.starts_with("unauthorized") && refused.contains("Tailscale"), "{refused}");
     assert_eq!(hello(untrusted, Some("secret"), None).await, "welcome");
 
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn workspaces_from_other_sessions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    c.send(json!({"t": "watch", "id": 2, "view": "sessions", "scope": project})).await;
+    c.until(|m| m["t"] == "snapshot" && m["watch"] == 2).await;
+
+    // The owner builds: an uncommitted edit in its worktree.
+    let owner = c.rpc("session.create", json!({"project": project, "prompt": "build"})).await["id"].clone();
+    let row = c.until(|m| session_row_matches(m, |r| r["id"] == owner && r["status"] == "waiting")).await;
+    let owner_ws = row["upsert"][0]["workspace"].clone();
+    let opath = Path::new(owner_ws["path"].as_str().unwrap()).to_owned();
+    std::fs::write(opath.join("a.txt"), "one\nowner edit\n").unwrap();
+
+    // Share it read-only: same directory, started with the edit tools disallowed.
+    let reader = c
+        .rpc("session.create", json!({"project": project, "prompt": "review", "workspace": "shared", "from": owner}))
+        .await["id"]
+        .clone();
+    let row = c.until(|m| session_row_matches(m, |r| r["id"] == reader && r["status"] == "waiting")).await;
+    let rws = row["upsert"][0]["workspace"].clone();
+    assert_eq!((rws["mode"].as_str(), rws["path"].as_str()), (Some("shared"), owner_ws["path"].as_str()), "{rws}");
+    assert_eq!(rws["from"], owner);
+    let started_with = std::fs::read_to_string(git_out_path(&opath, "--git-dir").join("atelier-fake-args")).unwrap();
+    assert!(started_with.contains("--disallowedTools Edit,Write,NotebookEdit"), "{started_with}");
+    // Sharing a reader resolves to the owner.
+    let reader2 = c
+        .rpc("session.create", json!({"project": project, "prompt": "again", "workspace": "shared", "from": reader}))
+        .await["id"]
+        .clone();
+    let row = c.until(|m| session_row_matches(m, |r| r["id"] == reader2 && r["status"] == "waiting")).await;
+    assert_eq!(row["upsert"][0]["workspace"]["from"], owner);
+
+    // Branch from it: a fresh worktree at a snapshot that includes the owner's uncommitted edit.
+    let child = c
+        .rpc("session.create", json!({"project": project, "prompt": "alt", "workspace": "worktree", "from": owner}))
+        .await["id"]
+        .clone();
+    let row = c.until(|m| session_row_matches(m, |r| r["id"] == child && r["status"] == "waiting")).await;
+    let cws = row["upsert"][0]["workspace"].clone();
+    let cpath = Path::new(cws["path"].as_str().unwrap()).to_owned();
+    assert_ne!(cpath, opath);
+    assert_eq!((cws["mode"].as_str(), cws["from"].clone()), (Some("worktree"), owner.clone()), "{cws}");
+    assert!(cws["snapshot"].is_string(), "{cws}");
+    assert_eq!(cws["base"], cws["snapshot"]);
+    assert_eq!(std::fs::read_to_string(cpath.join("a.txt")).unwrap(), "one\nowner edit\n");
+    let ch = c.rpc("session.changes", json!({"session": child})).await;
+    assert_eq!(ch["files"], json!([]));
+    // The owner is untouched by that.
+    assert!(git_out(&opath, &["status", "--porcelain"]).contains("a.txt"));
+
+    // Refusals: no `from` for a share, a directory has nothing to share, and the source must be live.
+    let e = rpc_err(&mut c, "session.create", json!({"project": project, "prompt": "x", "workspace": "shared"})).await;
+    assert!(e.contains("needs the session"), "{e}");
+    let e = rpc_err(
+        &mut c,
+        "session.create",
+        json!({"project": project, "prompt": "x", "workspace": "direct", "from": owner}),
+    )
+    .await;
+    assert!(e.contains("no worktree of its own"), "{e}");
+
+    // Archiving the owner keeps the worktree while a reader is live.
+    let r = c.rpc("session.archive", json!({"session": owner})).await;
+    assert_eq!(r["removed"], false);
+    assert!(r["kept"].as_str().unwrap().contains("is reading this worktree"), "{r}");
+    assert!(opath.exists());
+    // Nothing else is handed the reader's directory while it's in use.
+    let other = c.rpc("session.create", json!({"project": project, "prompt": "other"})).await["id"].clone();
+    let row = c.until(|m| session_row_matches(m, |r| r["id"] == other && r["status"] == "waiting")).await;
+    assert_ne!(row["upsert"][0]["workspace"]["path"], owner_ws["path"]);
+
+    // Archiving a reader never touches the worktree; the last reader out releases the archived owner's.
+    let r = c.rpc("session.archive", json!({"session": reader})).await;
+    assert_eq!(r["removed"], false);
+    assert!(r["kept"].is_null(), "{r}");
+    assert!(opath.exists());
+    // Clean first: the owner's uncommitted edit is what would otherwise keep the worktree.
+    git(&opath, &["checkout", "-q", "--", "a.txt"]);
+    let r = c.rpc("session.archive", json!({"session": reader2})).await;
+    assert_eq!(r["removed"], true, "{r}");
+    let owner_stream = format!("p/{}/s/{}", project.as_str().unwrap(), owner.as_str().unwrap());
+    c.send(json!({"t": "sub", "id": 8, "filter": {"stream": owner_stream}, "from": 1})).await;
+    c.until(|m| m["t"] == "live" && m["sub"] == 8).await;
+    assert!(c.event_kinds().iter().any(|k| k == "workspace.removed"));
+
+    // A branch's snapshot ref goes with its worktree.
+    let snap_ref = format!("refs/atelier/snap/{}", child.as_str().unwrap());
+    assert!(!git_out(&repo, &["for-each-ref", &snap_ref]).is_empty());
+    let r = c.rpc("session.archive", json!({"session": child})).await;
+    assert_eq!(r["removed"], true, "{r}");
+    assert!(git_out(&repo, &["for-each-ref", &snap_ref]).is_empty());
     app.supervisor.shutdown().await;
 }
 

@@ -10,6 +10,8 @@ case "$*" in
     echo '{"type":"result","subtype":"success","is_error":false,"result":"Login rate limits"}'
     exit 0 ;;
 esac
+# Tests read what the agent was started with from its git dir (untracked, so it stays out of Changes).
+echo "$*" > "$(git rev-parse --git-dir 2>/dev/null)/atelier-fake-args" 2>/dev/null
 resumed=false
 for arg in "$@"; do
   [ "$arg" = "--resume" ] && resumed=true

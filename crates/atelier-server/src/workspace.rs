@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use atelier_core::SessionId;
 use atelier_core::domain::{Workspace, WorkspaceMode};
-use atelier_proto::{ChangeStatus, Changes, FileChange, ProjectRow};
+use atelier_proto::{ChangeStatus, Changes, FileChange, MergeResult, ProjectRow};
 use tokio::process::Command;
 
 /// Free worktrees kept per project. Each holds a warm `target/` and `node_modules/`, so the cap is about disk.
@@ -237,6 +237,56 @@ pub async fn release(project: &ProjectRow, ws: &Workspace) -> Result<bool> {
     Ok(pooled)
 }
 
+/// Commit all of the worktree's changes, bring the project's current branch into the session branch (so
+/// conflicts surface in the worktree, where the agent can fix them), then fast-forward the project to it.
+/// With conflicts the merge is left in progress in the worktree; call again once they're resolved.
+pub async fn merge(project: &ProjectRow, ws: &Workspace, title: &str) -> Result<MergeResult> {
+    let (Some(branch), true) = (&ws.branch, ws.mode == WorkspaceMode::Worktree) else {
+        bail!("only worktree sessions can be merged");
+    };
+    let (repo, dir) = (Path::new(&project.path), Path::new(&ws.path));
+    let target = git(repo, &["symbolic-ref", "--short", "-q", "HEAD"])
+        .await
+        .context("the project has a detached HEAD; check out a branch to merge into")?;
+    let conflicted = |files: Vec<String>| MergeResult { target: target.clone(), merged: false, conflicts: files };
+
+    let merging = git(dir, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).await.is_ok();
+    if merging {
+        // Don't commit conflict markers the agent hasn't dealt with yet; a file it fixed but didn't `git add`
+        // is as good as resolved.
+        let mut left = Vec::new();
+        for f in unmerged(dir).await? {
+            let text = tokio::fs::read(dir.join(&f)).await.unwrap_or_default();
+            if text.windows(8).any(|w| w == b"<<<<<<< ") {
+                left.push(f);
+            }
+        }
+        if !left.is_empty() {
+            return Ok(conflicted(left));
+        }
+    }
+    git(dir, &["add", "-A"]).await?;
+    if !git(dir, &["status", "--porcelain"]).await?.is_empty() {
+        git(dir, &["commit", "-q", "-m", title]).await?;
+    }
+    if !merging && let Err(e) = git(dir, &["merge", "-q", "--no-edit", &target]).await {
+        let files = unmerged(dir).await?;
+        if files.is_empty() {
+            let _ = git(dir, &["merge", "--abort"]).await;
+            return Err(e);
+        }
+        return Ok(conflicted(files));
+    }
+    git(repo, &["merge", "-q", "--ff-only", branch])
+        .await
+        .with_context(|| format!("couldn't update {target} in the project directory"))?;
+    Ok(MergeResult { target, merged: true, conflicts: vec![] })
+}
+
+async fn unmerged(dir: &Path) -> Result<Vec<String>> {
+    Ok(git(dir, &["diff", "--name-only", "--diff-filter=U"]).await?.lines().map(str::to_owned).collect())
+}
+
 /// Is `path` inside a git work tree?
 pub async fn is_git(path: &Path) -> bool {
     git(path, &["rev-parse", "--is-inside-work-tree"]).await.is_ok_and(|o| o == "true")
@@ -298,6 +348,60 @@ mod tests {
 
     async fn sh(dir: &Path, args: &[&str]) {
         git(dir, args).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn merge_commits_fast_forwards_and_reports_conflicts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let id = ["-c", "user.email=t@t", "-c", "user.name=t"];
+        let commit = |m: &'static str| {
+            let mut a = id.to_vec();
+            a.extend(["commit", "-q", "-am", m]);
+            a
+        };
+        sh(&repo, &["init", "-q"]).await;
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        sh(&repo, &["add", "."]).await;
+        sh(&repo, &commit("init")).await;
+        let project = ProjectRow {
+            id: atelier_core::ProjectId("p1".into()),
+            name: "repo".into(),
+            path: repo.to_string_lossy().into_owned(),
+            is_git: true,
+            added_at: 0,
+            updated_at: 0,
+            sessions: 0,
+            running: 0,
+            waiting: 0,
+        };
+        let wt = tmp.path().join("worktrees");
+        let ws = prepare(&wt, &project, &SessionId::generate(), "m", WorkspaceMode::Worktree, &[]).await.unwrap();
+        let dir = PathBuf::from(&ws.path);
+        // Git config for commits made by `merge` itself.
+        sh(&dir, &["config", "user.email", "t@t"]).await;
+        sh(&dir, &["config", "user.name", "t"]).await;
+
+        // Uncommitted work (and a new file) lands on the project's branch.
+        std::fs::write(dir.join("a.txt"), "one\nmine\n").unwrap();
+        std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+        let r = merge(&project, &ws, "m").await.unwrap();
+        assert!(r.merged, "{r:?}");
+        assert_eq!(std::fs::read_to_string(repo.join("b.txt")).unwrap(), "b\n");
+
+        // Both sides touch the same line: conflict, left in the worktree.
+        std::fs::write(repo.join("a.txt"), "one\ntheirs\n").unwrap();
+        sh(&repo, &commit("theirs")).await;
+        std::fs::write(dir.join("a.txt"), "one\nmine2\n").unwrap();
+        let r = merge(&project, &ws, "m2").await.unwrap();
+        assert_eq!((r.merged, r.conflicts.as_slice()), (false, &["a.txt".to_owned()][..]));
+        // Still unresolved: asking again doesn't commit the markers.
+        assert!(!merge(&project, &ws, "m2").await.unwrap().merged);
+        std::fs::write(dir.join("a.txt"), "one\ntheirs\nmine2\n").unwrap();
+        let r = merge(&project, &ws, "m2").await.unwrap();
+        assert!(r.merged, "{r:?}");
+        assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "one\ntheirs\nmine2\n");
     }
 
     #[tokio::test]

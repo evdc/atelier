@@ -1275,6 +1275,21 @@
     display: none;
   }
 }
+.merge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.merge.in-header {
+  display: none;
+  margin: 0;
+}
+@media (max-width: 1100px) {
+  .merge.in-header {
+    display: inline-flex;
+  }
+}
 .panel-toggle[aria-pressed="true"] {
   color: var(--ink);
 }

@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, on, onCleanup, Show, type Accessor } f
 import { patchLines } from "../agents/patch";
 import type { Changes } from "../gen/Changes";
 import type { FileChange } from "../gen/FileChange";
+import type { MergeResult } from "../gen/MergeResult";
 import type { SessionRow } from "../gen/SessionRow";
 import { serverConfig } from "../lib/conn";
 import { canOpenIn, openIn, type OpenKind } from "../lib/openin";
@@ -13,7 +14,7 @@ import { Code } from "./tools/Code";
  * the session settles after a turn, since git is the source of truth and
  * nothing is logged.
  */
-export function createChanges(s: Accessor<SessionRow>): Accessor<Changes | null> {
+export function createChanges(s: Accessor<SessionRow>): [Accessor<Changes | null>, () => void] {
   const { conn } = useApp();
   const [changes, setChanges] = createSignal<Changes | null>(null);
   const refresh = () => {
@@ -25,7 +26,55 @@ export function createChanges(s: Accessor<SessionRow>): Accessor<Changes | null>
   };
   // Not while running: files are mid-edit, and git per tool call is wasted work.
   createEffect(on(() => [s().status, s().turns] as const, () => s().status !== "running" && refresh()));
-  return changes;
+  return [changes, refresh];
+}
+
+/**
+ * Stopgap until Proposals: commit everything and merge it into the project's
+ * branch. On conflicts the server has already told the agent to fix them.
+ */
+export function MergeButton(props: { row: Accessor<SessionRow>; refresh: () => void; class?: string }) {
+  const { conn } = useApp();
+  const s = props.row;
+  const [pending, setPending] = createSignal(false);
+  const [msg, setMsg] = createSignal<{ text: string; err?: boolean } | null>(null);
+  const busy = () => s().status === "running" || s().status === "waiting";
+  const merge = () => {
+    setPending(true);
+    setMsg(null);
+    conn
+      .call("session.merge", { session: s().id })
+      .then(
+        (r) => {
+          const m = r as MergeResult;
+          setMsg(
+            m.merged
+              ? { text: `Merged into ${m.target}.` }
+              : { text: `Conflicts in ${m.conflicts.length} ${m.conflicts.length === 1 ? "file" : "files"}; the agent is resolving them. Merge again when it's done.` },
+          );
+        },
+        (e: Error) => setMsg({ text: e.message, err: true }),
+      )
+      .finally(() => {
+        setPending(false);
+        props.refresh();
+      });
+  };
+  return (
+    <Show when={s().workspace.branch && !s().archived}>
+      <span class={`merge ${props.class ?? ""}`}>
+        <button
+          class="btn"
+          disabled={pending() || busy()}
+          title={busy() ? "Wait for the agent to finish its turn" : "Commit all changes and merge them into the project's branch"}
+          onClick={merge}
+        >
+          {pending() ? "Merging…" : "Merge"}
+        </button>
+        <Show when={msg()}>{(m) => <span class={m().err ? "err" : "faint"}>{m().text}</span>}</Show>
+      </span>
+    </Show>
+  );
 }
 
 export const totals = (c: Changes | null) => ({

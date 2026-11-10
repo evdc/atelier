@@ -14,9 +14,13 @@ export function SessionsView(props: { project: string; session?: string; creatin
   const project = () => projects.get(props.project);
   const sessions = createView<SessionRow>(conn, "sessions", props.project, byRecent);
 
-  const visible = () => sessions.list().filter((s) => !s.archived);
-  const active = () => visible().filter(isActive);
-  const earlier = () => visible().filter((s) => !isActive(s));
+  // Archived sessions are hidden unless asked for; the choice lasts only while this view is open.
+  const [showArchived, setShowArchived] = createSignal(false);
+  const live = () => sessions.list().filter((s) => !s.archived);
+  const archived = () => sessions.list().filter((s) => s.archived);
+  const active = () => live().filter(isActive);
+  const earlier = () => live().filter((s) => !isActive(s));
+  const shownArchived = () => (showArchived() ? archived() : []);
   const selected = () => (props.session ? sessions.get(props.session) : undefined);
   const hasDetail = () => !!props.session || props.creating;
   let detail: HTMLElement | undefined;
@@ -54,6 +58,12 @@ export function SessionsView(props: { project: string; session?: string; creatin
             New
           </a>
         </header>
+        <Show when={archived().length}>
+          <label class="show-arch faint">
+            <input type="checkbox" checked={showArchived()} onChange={(e) => setShowArchived(e.currentTarget.checked)} />{" "}
+            Show archived
+          </label>
+        </Show>
         <div class="pane">
           <Show when={imported()}>
             <div class="grp faint">{imported()}</div>
@@ -65,6 +75,10 @@ export function SessionsView(props: { project: string; session?: string; creatin
           <Show when={earlier().length}>
             <div class="grp cap">Earlier</div>
             <For each={earlier()}>{(s) => <SessionRowLink s={s} on={s.id === props.session} />}</For>
+          </Show>
+          <Show when={shownArchived().length}>
+            <div class="grp cap">Archived</div>
+            <For each={shownArchived()}>{(s) => <SessionRowLink s={s} on={s.id === props.session} />}</For>
           </Show>
         </div>
       </section>
@@ -83,7 +97,12 @@ export function SessionsView(props: { project: string; session?: string; creatin
               </Show>
             )}
           </Match>
-          <Match when={sessions.ready() && !visible().length}>
+          <Match when={sessions.ready() && !live().length && !shownArchived().length && archived().length}>
+            <div class="empty">
+              <p class="faint">Every session here is archived.</p>
+            </div>
+          </Match>
+          <Match when={sessions.ready() && !sessions.list().length}>
             <div class="empty">
               <div class="illum" />
               <p>No sessions yet. Start one, and it gets its own worktree to work in.</p>

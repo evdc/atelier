@@ -9,11 +9,11 @@
 
 use anyhow::{Context, Result, bail};
 use atelier_core::domain::{
-    AgentKind, ProjectAdded, ProjectRemoved, SessionArchived, SessionCreated, SessionRenamed, WorkspaceMode,
-    WorkspaceRemoved,
+    AgentKind, ProjectAdded, ProjectRemoved, SessionArchived, SessionCreated, SessionRenamed, SessionUnarchived,
+    WorkspaceMode, WorkspaceRemoved,
 };
 use atelier_core::{Actor, NewEvent, SessionId, stream};
-use atelier_proto::{Archived, Call, ProjectRow, SessionRow};
+use atelier_proto::{Archived, Call, ProjectRow, SessionRow, SessionStatus};
 use serde_json::{Value, json};
 
 use crate::{App, browse, views, workspace};
@@ -40,7 +40,12 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             }
             let id = SessionId::generate();
             let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| title_from(&prompt));
-            let ws = workspace::prepare(&app.config.worktrees_dir(), &p, &id, &title, workspace).await?;
+            let in_use: Vec<String> = {
+                let pid = p.id.0.clone();
+                let rows = app.store.read(move |c| views::sessions::list(c, Some(&pid))).await?;
+                rows.into_iter().filter(|s| !s.archived).map(|s| s.workspace.path).collect()
+            };
+            let ws = workspace::prepare(&app.config.worktrees_dir(), &p, &id, &title, workspace, &in_use).await?;
             let s_stream = stream::session(&p.id, &id);
             let created = SessionCreated {
                 id: id.clone(),
@@ -62,6 +67,12 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                 bail!("message is empty");
             }
             let s = session_row(app, &session).await?;
+            // Archiving released the worktree (its directory may be pooled for another session), and
+            // un-archiving doesn't bring it back. Refuse before the message is logged.
+            let id = s.id.as_str().to_owned();
+            if app.store.read(move |c| views::sessions::worktree_removed(c, &id)).await? {
+                bail!("its worktree was removed when it was archived; start a new session");
+            }
             app.supervisor.send(&s, text).await?;
             Ok(Value::Null)
         }
@@ -97,10 +108,13 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             if s.workspace.mode == WorkspaceMode::Worktree && !s.archived {
                 let p = project_row(app, s.project.as_str()).await?;
                 match workspace::unsafe_to_remove(&p, &s.workspace).await {
-                    Ok(None) => match workspace::remove(&p, &s.workspace).await {
-                        Ok(()) => {
-                            let gone =
-                                WorkspaceRemoved { path: s.workspace.path.clone(), branch: s.workspace.branch.clone() };
+                    Ok(None) => match workspace::release(&p, &s.workspace).await {
+                        Ok(pooled) => {
+                            let gone = WorkspaceRemoved {
+                                path: s.workspace.path.clone(),
+                                branch: s.workspace.branch.clone(),
+                                pooled,
+                            };
                             app.store.append_one(NewEvent::new(&s.stream, Actor::User, &gone)).await?;
                             result.removed = true;
                         }
@@ -112,9 +126,38 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             }
             Ok(serde_json::to_value(result)?)
         }
+        Call::SessionUnarchive { session } => {
+            let s = session_row(app, &session).await?;
+            if s.archived {
+                app.store.append_one(NewEvent::new(&s.stream, Actor::User, &SessionUnarchived {})).await?;
+            }
+            Ok(Value::Null)
+        }
         Call::SessionChanges { session } => {
             let s = session_row(app, &session).await?;
             Ok(serde_json::to_value(workspace::changes(&s.workspace).await?)?)
+        }
+        Call::SessionMerge { session } => {
+            let s = session_row(app, &session).await?;
+            if s.archived {
+                bail!("session is archived");
+            }
+            if s.status == SessionStatus::Running || s.status == SessionStatus::Waiting {
+                bail!("wait for the agent to finish its turn before merging");
+            }
+            let p = project_row(app, s.project.as_str()).await?;
+            let r = workspace::merge(&p, &s.workspace, &s.title).await?;
+            if !r.merged {
+                let list = r.conflicts.iter().map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n");
+                let text = format!(
+                    "Merging `{}` into this branch hit conflicts, left in progress in the worktree:\n{list}\n\n\
+                     Resolve them (keep both sides' intent), `git add` the files and run `git commit --no-edit`. \
+                     Don't abort the merge.",
+                    r.target
+                );
+                app.supervisor.send(&s, text).await?;
+            }
+            Ok(serde_json::to_value(r)?)
         }
         Call::SessionDiff { session, path } => {
             let s = session_row(app, &session).await?;

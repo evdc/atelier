@@ -29,7 +29,7 @@ impl Projection for Sessions {
         "sessions"
     }
     fn version(&self) -> u32 {
-        2
+        4
     }
     fn migrate(&self, db: &Connection) -> rusqlite::Result<()> {
         db.execute_batch(
@@ -50,7 +50,9 @@ impl Projection for Sessions {
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 archived   INTEGER NOT NULL DEFAULT 0,
-                imported   INTEGER NOT NULL DEFAULT 0
+                imported   INTEGER NOT NULL DEFAULT 0,
+                -- Archiving released the worktree; the directory may be pooled for another session.
+                worktree_removed INTEGER NOT NULL DEFAULT 0
              ) STRICT;
              -- One row per imported history file; `offset` is how far into it the log has seen.
              CREATE TABLE IF NOT EXISTS imports (
@@ -70,6 +72,7 @@ impl Projection for Sessions {
         // Only lifecycle kinds matter; bail early on everything else (most events).
         let kind = ev.kind.as_str();
         if !(kind.starts_with("session.")
+            || kind.starts_with("workspace.")
             || kind.starts_with("user.")
             || kind.starts_with("turn.")
             || kind.starts_with("permission.")
@@ -180,6 +183,10 @@ impl Projection for Sessions {
                 set("title = ?1", &[&r.title])?;
             } else if parse::<SessionArchived>(ev).is_some() {
                 set("archived = 1", &[])?;
+            } else if parse::<SessionUnarchived>(ev).is_some() {
+                set("archived = 0", &[])?;
+            } else if parse::<WorkspaceRemoved>(ev).is_some() {
+                set("worktree_removed = 1", &[])?;
             } else {
                 return Ok(()); // e.g. user.interrupt: the turn.ended that follows is what counts
             }
@@ -212,6 +219,13 @@ pub fn list(c: &Connection, project: Option<&str>) -> Result<Vec<SessionRow>> {
 pub fn get(c: &Connection, id: &str) -> Result<Option<SessionRow>> {
     let mut q = c.prepare_cached(&format!("{SELECT} WHERE id = ?1"))?;
     Ok(q.query_row([id], row).optional()?)
+}
+
+/// Whether archiving let go of this session's worktree, so its directory no longer belongs to it.
+pub fn worktree_removed(c: &Connection, id: &str) -> Result<bool> {
+    Ok(c.query_row("SELECT worktree_removed FROM sessions WHERE id = ?1", [id], |r| r.get(0))
+        .optional()?
+        .unwrap_or(false))
 }
 
 /// The agent's own session id, for resuming.

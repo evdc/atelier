@@ -65,6 +65,25 @@ export function DirPicker(props: { start?: string; onPick: (path: string) => voi
 
   return (
     <div class="picker">
+      {/* Shortcuts, kept visibly apart from the folder list below: a row of names, not more rows. */}
+      <Show when={suggestions().length}>
+        <div class="picker-recent" role="group" aria-label="Recent repositories">
+          <span class="picker-sub">Recent</span>
+          <For each={suggestions()}>
+            {(s) => (
+              <button
+                class="chip"
+                title={s.path}
+                aria-current={dir()?.path === s.path ? "location" : undefined}
+                onClick={() => open(s.path)}
+              >
+                {s.name}
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+
       <nav class="picker-h" aria-label="Current folder">
         <For each={crumbs()}>
           {(c, i) => (
@@ -83,22 +102,6 @@ export function DirPicker(props: { start?: string; onPick: (path: string) => voi
           )}
         </For>
       </nav>
-
-      <Show when={suggestions().length}>
-        <div class="picker-sub">Recent repositories</div>
-        <ul class="picker-list">
-          <For each={suggestions()}>
-            {(s) => (
-              <li>
-                <button onClick={() => open(s.path)}>
-                  <span class="name">{s.name}</span>
-                  <span class="faint">{s.path}</span>
-                </button>
-              </li>
-            )}
-          </For>
-        </ul>
-      </Show>
 
       <Show when={dir()}>
         {(d) => (

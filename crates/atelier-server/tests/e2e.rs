@@ -45,6 +45,14 @@ impl Client {
         reply["ok"].clone()
     }
 
+    /// Like `until`, but first looks at frames received since `from` (an index into `seen`).
+    async fn until_after(&mut self, from: usize, pred: impl Fn(&Value) -> bool) -> Value {
+        if let Some(m) = self.seen[from..].iter().find(|m| pred(m)) {
+            return m.clone();
+        }
+        self.until(pred).await
+    }
+
     /// Read frames until one matches (keeping all of them in `seen`).
     async fn until(&mut self, pred: impl Fn(&Value) -> bool) -> Value {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -75,6 +83,11 @@ impl Client {
 fn git(dir: &Path, args: &[&str]) {
     let ok = std::process::Command::new("git").arg("-C").arg(dir).args(args).status().unwrap().success();
     assert!(ok, "git {args:?}");
+}
+
+fn git_out(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 
 fn session_row_matches(m: &Value, pred: impl Fn(&Value) -> bool) -> bool {
@@ -345,6 +358,37 @@ async fn session_rename_over_websocket() {
 }
 
 #[tokio::test]
+async fn archived_session_can_be_unarchived_but_not_resumed_without_its_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"]);
+
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let (_, sid, _) = session_in_project(&mut c, &repo, "Tidy the README").await;
+    c.rpc("session.answer", json!({"session": sid, "request_id": "r1", "decision": {"behavior": "allow"}})).await;
+    c.until(|m| session_row_matches(m, |r| r["id"] == sid && r["status"] == "idle")).await;
+
+    // Clean worktree: archiving removes it. Patches that arrive while an rpc is awaited are
+    // already in `seen`, so each wait starts from the frames received after its own call.
+    let mark = c.seen.len();
+    let archived = c.rpc("session.archive", json!({"session": sid})).await;
+    assert_eq!(archived["removed"], true, "{archived}");
+    c.until_after(mark, |m| session_row_matches(m, |r| r["id"] == sid && r["archived"] == true)).await;
+
+    let mark = c.seen.len();
+    c.rpc("session.unarchive", json!({"session": sid})).await;
+    c.until_after(mark, |m| session_row_matches(m, |r| r["id"] == sid && r["archived"] == false)).await;
+
+    // The worktree is gone, so a new message is refused before anything is logged.
+    let why = rpc_err(&mut c, "session.send", json!({"session": sid, "text": "hello again"})).await;
+    assert!(why.contains("worktree was removed"), "{why}");
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
 async fn auto_title_names_session_after_first_turn() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
@@ -543,7 +587,11 @@ async fn worktree_changes_and_archive_cleanup() {
         (Path::new(ws["path"].as_str().unwrap()).to_owned(), ws["branch"].as_str().unwrap().to_owned());
     let r = c.rpc("session.archive", json!({"session": clean})).await;
     assert_eq!(r["removed"], true, "{r}");
-    assert!(!cpath.exists());
+    // The directory is pooled: kept (detached) for the next session, along with its ignored files.
+    assert!(cpath.exists());
+    assert!(git_out(&cpath, &["branch", "--show-current"]).is_empty());
+    std::fs::write(repo.join(".git/info/exclude"), "warm.marker\n").unwrap();
+    std::fs::write(cpath.join("warm.marker"), "x").unwrap();
     let branches = std::process::Command::new("git").arg("-C").arg(&repo).args(["branch", "--list"]).output().unwrap();
     let branches = String::from_utf8_lossy(&branches.stdout);
     assert!(!branches.contains(&cbranch) && branches.contains(&branch), "{branches}");
@@ -555,6 +603,12 @@ async fn worktree_changes_and_archive_cleanup() {
     c.until(|m| session_row_matches(m, |r| r["id"] == unmerged && r["status"] == "waiting")).await;
     let row = c.seen.iter().rev().find(|m| session_row_matches(m, |r| r["id"] == unmerged)).unwrap().clone();
     let upath = Path::new(row["upsert"][0]["workspace"]["path"].as_str().unwrap()).to_owned();
+    assert_eq!(upath, cpath, "the pooled worktree is reused");
+    assert!(upath.join("warm.marker").exists());
+    assert_eq!(
+        git_out(&upath, &["branch", "--show-current"]),
+        row["upsert"][0]["workspace"]["branch"].as_str().unwrap()
+    );
     std::fs::write(upath.join("b.txt"), "b\n").unwrap();
     git(&upath, &["add", "."]);
     git(&upath, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "b"]);

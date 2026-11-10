@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionRow } from "../gen/SessionRow";
-import { keyboardInset, swipeIsBack, swipeMove, waitingList } from "./phone";
+import { keyboardInset, rowSwipe, rowSwipeCommits, swipeIsBack, swipeMove, waitingList } from "./phone";
 import { home, href, parse, tabOf } from "./routes";
 
 const row = (id: string, status: SessionRow["status"], updated_at: number, archived = false): SessionRow => ({
@@ -73,5 +73,18 @@ describe("routes", () => {
   it("keeps the tab a project screen was reached from", () => {
     expect(tabOf({ name: "sessions", project: "x", session: "y" }, "waiting")).toBe("waiting");
     expect(tabOf({ name: "all" }, "waiting")).toBe("all");
+  });
+});
+
+describe("row swipe", () => {
+  it("follows leftward horizontal drags only", () => {
+    expect(rowSwipe(-3, 2)).toBe("pending");
+    expect(rowSwipe(-40, 5)).toBe(-40);
+    expect(rowSwipe(40, 5)).toBeNull();
+    expect(rowSwipe(-10, 30)).toBeNull();
+  });
+  it("commits past a threshold", () => {
+    expect(rowSwipeCommits(-100, 390)).toBe(true);
+    expect(rowSwipeCommits(-50, 390)).toBe(false);
   });
 });

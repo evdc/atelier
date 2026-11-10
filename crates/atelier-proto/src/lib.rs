@@ -120,9 +120,18 @@ pub enum Call {
     /// Result: [`Archived`].
     #[serde(rename = "session.archive")]
     SessionArchive { session: SessionId },
+    /// Put an archived session back in the list. Does not restore a removed worktree.
+    /// Result: none.
+    #[serde(rename = "session.unarchive")]
+    SessionUnarchive { session: SessionId },
     /// What the session changed in its workspace. Result: [`Changes`].
     #[serde(rename = "session.changes")]
     SessionChanges { session: SessionId },
+    /// Commit everything in the session's worktree and merge it into the
+    /// project's checked-out branch. On conflicts the agent is told to resolve
+    /// them; call again once it has. Result: [`MergeResult`].
+    #[serde(rename = "session.merge")]
+    SessionMerge { session: SessionId },
     /// The unified diff of one changed file. Result: `{ patch }`.
     #[serde(rename = "session.diff")]
     SessionDiff { session: SessionId, path: String },
@@ -201,6 +210,17 @@ pub struct Archived {
     #[serde(default)]
     #[ts(optional)]
     pub kept: Option<String>,
+}
+
+/// Result of `session.merge`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MergeResult {
+    /// The branch the session's work was merged into (or tried to be).
+    pub target: String,
+    pub merged: bool,
+    /// Files left conflicted in the worktree; the agent has been asked to fix them.
+    pub conflicts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

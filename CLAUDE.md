@@ -44,7 +44,8 @@ State is never sent by RPC results; clients converge by folding the same log.
 
 ```
 make dev     server (home ~/.atelier-dev, port 7748) + UI at http://localhost:5173
-make app     desktop app against a fresh dev server (same home and port); the installed app keeps ~/.atelier on 7747
+make app     desktop app over your real data (~/.atelier, 7747); pauses the installed server, restores it on quit
+make app-dev desktop app against a fresh dev server (dev home and port, like make dev)
 make test    cargo test --workspace && vitest
 make check   fmt + clippy -D warnings + bindings fresh + tsc   ← must pass before you hand work back
 make gen     regenerate TS bindings

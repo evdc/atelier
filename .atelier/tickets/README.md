@@ -31,3 +31,13 @@ Written to be picked up cold by an agent: read the ticket, then the files it nam
 | AT-021 | iOS shell (Tauri iOS target) | M2 | M | |
 | AT-022 | Phone layout pass + "Waiting on you" home | M2 | M | |
 | AT-023 | iOS on a real device: reconnect, data budget, TestFlight | M2 | S | AT-012, AT-021, AT-022 |
+| AT-024 | Search sessions: full-text index (BM25), RPC and UI | M1 | M | |
+| AT-025 | Search sessions: semantic index and hybrid ranking | M1 | M | AT-024 |
+| AT-026 | Atelier MCP server: agent identity, `sessions` and `read` tools | M4 | M | |
+| AT-027 | MCP `search` tool over session search | M4 | S | AT-024, AT-026 |
+| AT-028 | Messages between sessions (`send`) | M4 | M | AT-026 |
+| AT-029 | `spawn`: agents start child sessions | M9 | M | AT-026, AT-028, AT-033 |
+| AT-030 | `ask`: synchronous questions to another session | M4 | M | AT-028 |
+| AT-031 | Ask a fork: question a session without spending its context | M5 | M | AT-030, AT-033 |
+| AT-032 | Budgets for session trees | M9 | S | AT-029 |
+| AT-033 | Workspaces from other sessions: share (read-only) and branch-from | M4 | M | |

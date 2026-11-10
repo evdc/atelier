@@ -3,6 +3,7 @@
 //   #/                         all projects
 //   #/waiting                  sessions waiting on you, across projects (home on a phone)
 //   #/sessions                 every session, across projects
+//   #/new                      start a session in a project chosen there
 //   #/p/<project>              a project's sessions
 //   #/p/<project>/new          start a session
 //   #/p/<project>/s/<session>  one session
@@ -11,6 +12,7 @@ export type Route =
   | { name: "projects" }
   | { name: "waiting" }
   | { name: "all" }
+  | { name: "new" }
   | { name: "sessions"; project: string; session?: string; creating?: boolean };
 
 /** The phone's bottom bar. */
@@ -26,6 +28,7 @@ export function parse(hash: string): Route {
   }
   if (parts[0] === "waiting") return { name: "waiting" };
   if (parts[0] === "sessions") return { name: "all" };
+  if (parts[0] === "new") return { name: "new" };
   return { name: "projects" };
 }
 
@@ -33,6 +36,7 @@ export function href(r: Route): string {
   if (r.name === "projects") return "#/";
   if (r.name === "waiting") return "#/waiting";
   if (r.name === "all") return "#/sessions";
+  if (r.name === "new") return "#/new";
   const p = `#/p/${encodeURIComponent(r.project)}`;
   if (r.session) return `${p}/s/${encodeURIComponent(r.session)}`;
   if (r.creating) return `${p}/new`;
@@ -50,6 +54,7 @@ export function tabOf(r: Route, prev: Tab): Tab {
   if (r.name === "waiting") return "waiting";
   if (r.name === "all") return "all";
   if (r.name === "projects") return "projects";
+  if (r.name === "new") return "all";
   return prev;
 }
 

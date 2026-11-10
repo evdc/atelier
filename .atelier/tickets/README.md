@@ -31,3 +31,5 @@ Written to be picked up cold by an agent: read the ticket, then the files it nam
 | AT-021 | iOS shell (Tauri iOS target) | M2 | M | |
 | AT-022 | Phone layout pass + "Waiting on you" home | M2 | M | |
 | AT-023 | iOS on a real device: reconnect, data budget, TestFlight | M2 | S | AT-012, AT-021, AT-022 |
+| AT-024 | Search sessions: full-text index (BM25), RPC and UI | M1 | M | |
+| AT-025 | Search sessions: semantic index and hybrid ranking | M1 | M | AT-024 |

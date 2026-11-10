@@ -17,4 +17,8 @@ alive: boolean,
 /**
  * Unanswered permission requests / questions.
  */
-pending: number, turns: number, cost_usd: number, created_at: number, updated_at: number, archived: boolean, };
+pending: number, turns: number, cost_usd: number, created_at: number, updated_at: number, archived: boolean, 
+/**
+ * Read from the agent's own history rather than started here.
+ */
+imported: boolean, };

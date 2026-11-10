@@ -18,6 +18,9 @@ export function SessionRowLink(props: { s: SessionRow; on?: boolean; projectName
         <Show when={props.projectName}>
           <span>{props.projectName}</span>
         </Show>
+        <Show when={s().imported}>
+          <span>imported</span>
+        </Show>
         <span>{s().workspace.branch ?? "project dir"}</span>
       </span>
     </a>

@@ -348,7 +348,7 @@ fn classify(
 
 /// Thinking-block signatures are large opaque blobs only the API needs
 /// (CC keeps its own transcript for resuming). Don't store or ship them.
-fn strip_signatures(msg: &mut Value) {
+pub fn strip_signatures(msg: &mut Value) {
     if let Some(blocks) = msg.pointer_mut("/message/content").and_then(Value::as_array_mut) {
         for b in blocks {
             if let Some(o) = b.as_object_mut() {

@@ -10,6 +10,7 @@
 pub mod autotitle;
 pub mod browse;
 pub mod config;
+pub mod import;
 pub mod rpc;
 pub mod supervisor;
 pub mod sync;
@@ -42,6 +43,8 @@ pub struct App {
     pub stopping: tokio::sync::watch::Sender<bool>,
     /// Vouches for token-less peers on the tailnet listener.
     pub peers: Arc<dyn PeerAuth>,
+    /// Serializes `project.import`.
+    pub import_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl App {
@@ -59,7 +62,7 @@ impl App {
         supervisor.spawn_reaper(config.idle_timeout);
         let (stopping, _) = tokio::sync::watch::channel(false);
         let peers = Arc::new(tailnet::Tailscale::new(config.tailscale_bin.clone()));
-        Ok(Self { config: Arc::new(config), store, supervisor, stopping, peers })
+        Ok(Self { config: Arc::new(config), store, supervisor, stopping, peers, import_lock: Default::default() })
     }
 
     /// For the loopback listener: every client needs the token.

@@ -84,8 +84,45 @@ pub struct SessionCreated {
     pub workspace: Workspace,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Where the session came from, when Atelier didn't start it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Origin>,
+    /// Unix ms the conversation really began, for imports (an event's `ts` is
+    /// when it was appended, not when it happened).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number | null")]
+    pub started_at: Option<i64>,
 }
 kind!(SessionCreated, "session.created");
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Origin {
+    /// Read from the agent's own history on disk.
+    Imported {
+        /// The agent's session id (what `claude --resume` takes).
+        native_id: String,
+        /// The history file it was read from.
+        path: String,
+    },
+}
+
+/// Part of an imported history file was copied into the session's stream.
+/// `offset` is the byte position just past the last line imported, so a later
+/// import continues from there.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ImportProgressed {
+    pub path: String,
+    #[ts(type = "number")]
+    pub offset: u64,
+    /// Unix ms of the newest message copied, so the session sorts by when it was last active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number | null")]
+    pub at: Option<i64>,
+}
+kind!(ImportProgressed, "import.progressed");
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]

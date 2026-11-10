@@ -29,7 +29,7 @@ impl Projection for Sessions {
         "sessions"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn migrate(&self, db: &Connection) -> rusqlite::Result<()> {
         db.execute_batch(
@@ -49,13 +49,21 @@ impl Projection for Sessions {
                 cost_usd   REAL NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
-                archived   INTEGER NOT NULL DEFAULT 0
+                archived   INTEGER NOT NULL DEFAULT 0,
+                imported   INTEGER NOT NULL DEFAULT 0
+             ) STRICT;
+             -- One row per imported history file; `offset` is how far into it the log has seen.
+             CREATE TABLE IF NOT EXISTS imports (
+                path      TEXT PRIMARY KEY,
+                native_id TEXT NOT NULL,
+                session   TEXT NOT NULL,
+                offset    INTEGER NOT NULL DEFAULT 0
              ) STRICT;
              CREATE INDEX IF NOT EXISTS sessions_by_project ON sessions(project, updated_at);",
         )
     }
     fn reset(&self, db: &Connection) -> rusqlite::Result<()> {
-        db.execute_batch("DROP TABLE IF EXISTS sessions;")
+        db.execute_batch("DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS imports;")
     }
 
     fn apply(&mut self, db: &Connection, ev: &Event, out: &mut Vec<Change>) -> Result<()> {
@@ -66,7 +74,8 @@ impl Projection for Sessions {
             || kind.starts_with("turn.")
             || kind.starts_with("permission.")
             || kind.starts_with("process.")
-            || kind.starts_with("agent."))
+            || kind.starts_with("agent.")
+            || kind.starts_with("import."))
         {
             return Ok(());
         }
@@ -75,11 +84,33 @@ impl Projection for Sessions {
         };
         let id = id.as_str();
 
+        if let Some(p) = parse::<ImportProgressed>(ev) {
+            db.execute("UPDATE imports SET offset = ?1 WHERE path = ?2", params![p.offset as i64, p.path])?;
+            if let Some(at) = p.at {
+                db.execute("UPDATE sessions SET updated_at = MAX(updated_at, ?1) WHERE id = ?2", params![at, id])?;
+                out.push(Change::new(VIEW, id, Some(project.0.clone())));
+                out.push(Change::new(super::projects::VIEW, project.0, None));
+            }
+            return Ok(());
+        }
+
         if let Some(s) = parse::<SessionCreated>(ev) {
+            let at = s.started_at.unwrap_or(ev.ts);
+            let (imported, native_id) = match &s.origin {
+                Some(Origin::Imported { native_id, path }) => {
+                    db.execute(
+                        "INSERT OR IGNORE INTO imports (path, native_id, session) VALUES (?1, ?2, ?3)",
+                        params![path, native_id, id],
+                    )?;
+                    (true, Some(native_id.as_str()))
+                }
+                None => (false, None),
+            };
             db.execute(
                 "INSERT OR IGNORE INTO sessions
-                   (id, project, stream, title, agent, workspace, model, status, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'idle', ?8, ?8)",
+                   (id, project, stream, title, agent, workspace, model, native_id, imported, status,
+                    created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?9, ?10, 'idle', ?8, ?8)",
                 params![
                     id,
                     project.as_str(),
@@ -88,7 +119,9 @@ impl Projection for Sessions {
                     serde_json::to_value(s.agent)?.as_str(),
                     serde_json::to_string(&s.workspace)?,
                     s.model,
-                    ev.ts
+                    at,
+                    native_id,
+                    imported
                 ],
             )?;
         } else {
@@ -159,7 +192,7 @@ impl Projection for Sessions {
 }
 
 const SELECT: &str = "SELECT id, project, stream, title, agent, workspace, model, status, alive, pending,
-                             turns, cost_usd, created_at, updated_at, archived
+                             turns, cost_usd, created_at, updated_at, archived, imported
                       FROM sessions";
 
 pub fn list(c: &Connection, project: Option<&str>) -> Result<Vec<SessionRow>> {
@@ -214,5 +247,19 @@ fn row(r: &Row) -> rusqlite::Result<SessionRow> {
         created_at: r.get(12)?,
         updated_at: r.get(13)?,
         archived: r.get(14)?,
+        imported: r.get(15)?,
     })
+}
+
+/// Where an imported history file has been read up to, if it has been imported.
+pub fn import_offset(c: &Connection, path: &str) -> Result<Option<(String, u64)>> {
+    Ok(c.query_row("SELECT session, offset FROM imports WHERE path = ?1", [path], |r| {
+        Ok((r.get(0)?, r.get::<_, i64>(1)? as u64))
+    })
+    .optional()?)
+}
+
+/// Whether a session already has this agent session id (started here, or imported).
+pub fn has_native_id(c: &Connection, native_id: &str) -> Result<bool> {
+    Ok(c.query_row("SELECT 1 FROM sessions WHERE native_id = ?1", [native_id], |_| Ok(())).optional()?.is_some())
 }

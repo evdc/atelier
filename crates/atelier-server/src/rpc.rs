@@ -49,6 +49,8 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                 agent: AgentKind::ClaudeCode,
                 workspace: ws,
                 model,
+                origin: None,
+                started_at: None,
             };
             app.store.append_one(NewEvent::new(&s_stream, Actor::User, &created)).await?;
             let s = session_row(app, &id).await?;
@@ -118,6 +120,10 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             let s = session_row(app, &session).await?;
             Ok(json!({ "patch": workspace::diff(&s.workspace, &path).await? }))
         }
+        Call::ProjectImport { project } => {
+            let p = project_row(app, project.as_str()).await?;
+            Ok(serde_json::to_value(crate::import::project(app, &p).await?)?)
+        }
         Call::FsList { path, hidden } => Ok(serde_json::to_value(browse::list(path, hidden.unwrap_or(false)).await?)?),
         Call::FsSuggest {} => Ok(serde_json::to_value(browse::suggest().await?)?),
     }
@@ -163,7 +169,7 @@ async fn session_row(app: &App, id: &SessionId) -> Result<SessionRow> {
 }
 
 /// First line of the prompt, cut at a word boundary near 60 chars.
-fn title_from(prompt: &str) -> String {
+pub(crate) fn title_from(prompt: &str) -> String {
     let line = prompt.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("Untitled");
     if line.chars().count() <= 60 {
         return line.to_owned();

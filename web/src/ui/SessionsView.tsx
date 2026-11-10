@@ -1,4 +1,5 @@
-import { For, Match, Show, Switch } from "solid-js";
+import { createSignal, For, Match, Show, Switch } from "solid-js";
+import type { Imported } from "../gen/Imported";
 import type { SessionRow } from "../gen/SessionRow";
 import { back, href } from "../lib/router";
 import { byRecent, createView } from "../lib/view";
@@ -20,16 +21,43 @@ export function SessionsView(props: { project: string; session?: string; creatin
   const hasDetail = () => !!props.session || props.creating;
   let detail: HTMLElement | undefined;
 
+  // Importing reads Claude Code's history from disk, so it only happens when asked.
+  const [importing, setImporting] = createSignal(false);
+  const [imported, setImported] = createSignal("");
+  const importHistory = async () => {
+    setImporting(true);
+    setImported("");
+    try {
+      const r = (await conn.call("project.import", { project: props.project })) as Imported;
+      setImported(r.messages ? `Imported ${r.sessions} new, ${r.messages} messages` : "Nothing new to import");
+    } catch (e) {
+      setImported(e instanceof Error ? e.message : String(e));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div class="split" classList={{ "has-detail": hasDetail() }}>
       <section class="list">
         <header class="list-h">
           <h2>{project()?.name ?? ""}</h2>
+          <button
+            class="btn quiet"
+            disabled={importing()}
+            onClick={importHistory}
+            title="Bring in this project's existing Claude Code sessions"
+          >
+            {importing() ? "Importing…" : "Import"}
+          </button>
           <a class="btn" href={href({ name: "sessions", project: props.project, creating: true })} title="New session">
             New
           </a>
         </header>
         <div class="pane">
+          <Show when={imported()}>
+            <div class="grp faint">{imported()}</div>
+          </Show>
           <Show when={active().length}>
             <div class="grp cap">Active</div>
             <For each={active()}>{(s) => <SessionRowLink s={s} on={s.id === props.session} />}</For>

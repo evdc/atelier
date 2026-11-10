@@ -126,6 +126,10 @@ pub enum Call {
     /// The unified diff of one changed file. Result: `{ patch }`.
     #[serde(rename = "session.diff")]
     SessionDiff { session: SessionId, path: String },
+    /// Copy the project's existing Claude Code sessions (and new lines of ones
+    /// already copied) into the log. Only runs when asked. Result: [`Imported`].
+    #[serde(rename = "project.import")]
+    ProjectImport { project: ProjectId },
     /// Directories inside `path` on the server (default: its user's home), for
     /// the add-project picker. Result: [`DirListing`].
     #[serde(rename = "fs.list")]
@@ -142,6 +146,16 @@ pub enum Call {
     /// server's home. Result: [`Suggestions`].
     #[serde(rename = "fs.suggest")]
     FsSuggest {},
+}
+
+/// Result of `project.import`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Imported {
+    /// Sessions newly added.
+    pub sessions: u32,
+    /// Messages copied, across new and continued sessions.
+    pub messages: u32,
 }
 
 /// Result of `fs.list`. Directories only, capped at 500 entries.
@@ -373,6 +387,8 @@ pub struct SessionRow {
     #[ts(type = "number")]
     pub updated_at: i64,
     pub archived: bool,
+    /// Read from the agent's own history rather than started here.
+    pub imported: bool,
 }
 
 /// Subscription usage, from the latest `cc.rate_limit_event` per window across

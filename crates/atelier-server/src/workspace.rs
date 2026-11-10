@@ -148,6 +148,14 @@ pub async fn is_git(path: &Path) -> bool {
     git(path, &["rev-parse", "--is-inside-work-tree"]).await.is_ok_and(|o| o == "true")
 }
 
+/// Every work tree of the repository at `path` (including `path` itself). Empty if it isn't one.
+pub async fn worktrees(path: &Path) -> Vec<PathBuf> {
+    let Ok(out) = git_raw(path, &["worktree", "list", "--porcelain"]).await else {
+        return Vec::new();
+    };
+    out.lines().filter_map(|l| l.strip_prefix("worktree ")).map(PathBuf::from).collect()
+}
+
 async fn git(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(git_raw(dir, args).await?.trim().to_owned())
 }

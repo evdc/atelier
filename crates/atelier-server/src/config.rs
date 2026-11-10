@@ -19,6 +19,9 @@ pub struct Config {
     pub tailscale_bin: PathBuf,
     /// `ATELIER_CLAUDE_BIN`, default `claude` (from PATH).
     pub claude_bin: PathBuf,
+    /// Where Claude Code keeps its history (`<dir>/projects/<slug>/*.jsonl`). `ATELIER_CLAUDE_HOME`,
+    /// default `~/.claude`.
+    pub claude_home: PathBuf,
     /// `ATELIER_IDLE_SECS`, default 600: an agent process whose session has been idle this long is stopped
     /// and resumed on the next message.
     pub idle_timeout: Duration,
@@ -51,6 +54,10 @@ impl Config {
         let listen =
             listen.unwrap_or_else(|| format!("127.0.0.1:{DEFAULT_PORT}")).parse().context("bad listen address")?;
         let claude_bin = std::env::var_os("ATELIER_CLAUDE_BIN").map(PathBuf::from).unwrap_or_else(|| "claude".into());
+        let claude_home = std::env::var_os("ATELIER_CLAUDE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| dirs::home_dir().map(|h| h.join(".claude")))
+            .context("no home directory")?;
         let auto_title = !std::env::var("ATELIER_AUTO_TITLE").is_ok_and(|v| matches!(v.as_str(), "0" | "false" | "no"));
         let listen_tailscale =
             std::env::var("ATELIER_LISTEN_TAILSCALE").is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "yes"));
@@ -66,6 +73,7 @@ impl Config {
             listen_tailscale,
             tailscale_bin,
             claude_bin,
+            claude_home,
             auto_title,
             idle_timeout: Duration::from_secs(idle_secs),
             token,

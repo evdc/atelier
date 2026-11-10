@@ -95,6 +95,7 @@ async fn session_lifecycle_over_websocket() {
         listen_tailscale: false,
         tailscale_bin: "false".into(),
         claude_bin: FAKE.into(),
+        claude_home: tmp.path().join("claude"),
         idle_timeout: Duration::from_secs(600),
         auto_title: false,
         token: Some("secret".into()),
@@ -414,6 +415,7 @@ async fn tailnet_peers_and_tokens() {
         listen_tailscale: false,
         tailscale_bin: "false".into(),
         claude_bin: FAKE.into(),
+        claude_home: tmp.path().join("claude"),
         idle_timeout: Duration::from_secs(600),
         auto_title: false,
         token: Some("secret".into()),
@@ -460,6 +462,7 @@ async fn boot_with(tmp: &Path, idle_timeout: Duration, auto_title: bool) -> (App
         listen_tailscale: false,
         tailscale_bin: "false".into(),
         claude_bin: FAKE.into(),
+        claude_home: tmp.join("claude"),
         idle_timeout,
         auto_title,
         token: Some("secret".into()),
@@ -567,4 +570,102 @@ async fn worktree_changes_and_archive_cleanup() {
     c.until(|m| m["t"] == "live" && m["sub"] == 7).await;
     assert!(c.event_kinds().iter().any(|k| k == "workspace.removed"));
     app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn import_runs_only_on_request_and_only_adds_what_is_new() {
+    use std::io::Write;
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let repo = repo.canonicalize().unwrap();
+    let cwd = repo.to_str().unwrap();
+
+    let config = Config {
+        home: tmp.path().join("home"),
+        listen: "127.0.0.1:0".parse().unwrap(),
+        listen_tailscale: false,
+        tailscale_bin: "false".into(),
+        claude_bin: FAKE.into(),
+        claude_home: tmp.path().join("claude"),
+        idle_timeout: Duration::from_secs(600),
+        auto_title: false,
+        token: Some("secret".into()),
+    };
+    // The history already exists when the project is added, as with a real `~/.claude`.
+    let slug: String = cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let dir = config.claude_home.join("projects").join(slug);
+    std::fs::create_dir_all(&dir).unwrap();
+    let theirs = dir.join("native-1.jsonl");
+    let line = |ty: &str, ts: &str, content: Value| {
+        json!({"type": ty, "cwd": cwd, "timestamp": ts, "message": {"role": ty, "content": content}}).to_string()
+    };
+    let mut f = std::fs::File::create(&theirs).unwrap();
+    writeln!(f, r#"{{"type":"queue-operation","operation":"enqueue"}}"#).unwrap();
+    writeln!(f, "{}", line("user", "2026-01-01T00:00:00.000Z", json!("Fix the login bug"))).unwrap();
+    writeln!(
+        f,
+        "{}",
+        line(
+            "assistant",
+            "2026-01-01T00:00:05.000Z",
+            json!([{"type": "thinking", "thinking": "", "signature": "SIG"}])
+        )
+    )
+    .unwrap();
+    // A session from some other directory is not ours.
+    let other = dir.join("native-2.jsonl");
+    std::fs::write(
+        &other,
+        line("user", "2026-01-01T00:00:00.000Z", json!("elsewhere")).replace(cwd, "/elsewhere") + "\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(&config.home).unwrap();
+    let app = App::start(config).await.unwrap();
+    let addr = serve(app, false).await;
+    let mut c = Client::connect(addr, "secret").await;
+
+    let project = c.rpc("project.add", json!({"path": cwd})).await["id"].clone();
+    c.send(json!({"t": "watch", "id": 1, "view": "sessions", "scope": project})).await;
+    let snap = c.until(|m| m["t"] == "snapshot" && m["watch"] == 1).await;
+    // Adding the project did not import anything.
+    assert_eq!(snap["rows"], json!([]));
+
+    let r = c.rpc("project.import", json!({"project": project})).await;
+    assert_eq!((r["sessions"].clone(), r["messages"].clone()), (json!(1), json!(2)));
+    // The patch may already have arrived while the rpc reply was awaited.
+    let is_row =
+        |m: &Value| session_row_matches(m, |r| r["imported"] == true && r["updated_at"] == 1_767_225_605_000i64);
+    let row = match c.seen.iter().find(|m| is_row(m)) {
+        Some(m) => m.clone(),
+        None => c.until(is_row).await,
+    };
+    let row = &row["upsert"][0];
+    assert_eq!(row["title"], "Fix the login bug");
+    assert_eq!(row["created_at"], 1_767_225_600_000i64);
+    assert_eq!(row["workspace"]["path"], cwd);
+    let stream = row["stream"].as_str().unwrap().to_owned();
+
+    // Nothing new: nothing imported.
+    let r = c.rpc("project.import", json!({"project": project})).await;
+    assert_eq!((r["sessions"].clone(), r["messages"].clone()), (json!(0), json!(0)));
+
+    // The terminal session continues, mid-write at the end; only the finished line comes over.
+    let mut f = std::fs::OpenOptions::new().append(true).open(&theirs).unwrap();
+    writeln!(f, "{}", line("user", "2026-01-01T00:01:00.000Z", json!("and the signup?"))).unwrap();
+    write!(f, r#"{{"type":"assistant","#).unwrap();
+    let r = c.rpc("project.import", json!({"project": project})).await;
+    assert_eq!((r["sessions"].clone(), r["messages"].clone()), (json!(0), json!(1)));
+    let r = c.rpc("project.import", json!({"project": project})).await;
+    assert_eq!(r["messages"], json!(0));
+
+    c.send(json!({"t": "sub", "id": 2, "filter": {"stream": stream}, "from": 1})).await;
+    c.until(|m| m["t"] == "live" && m["sub"] == 2).await;
+    let kinds = c.event_kinds();
+    assert_eq!(kinds.iter().filter(|k| *k == "session.created").count(), 1);
+    assert_eq!(kinds.iter().filter(|k| *k == "cc.user").count(), 2);
+    assert_eq!(kinds.iter().filter(|k| *k == "cc.assistant").count(), 1);
+    let blob = serde_json::to_string(&c.seen).unwrap();
+    assert!(!blob.contains("SIG"), "thinking signatures are stripped");
 }

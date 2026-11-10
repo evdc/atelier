@@ -1,5 +1,5 @@
 # Atelier dev tasks. `make help` lists them.
-.PHONY: help dev server web app bundle ios-dev ios-build ios-run ios-device gen test check fmt
+.PHONY: help dev server web app app-dev bundle ios-dev ios-build ios-run ios-device gen test check fmt
 
 HOME_DEV ?= $(HOME)/.atelier-dev
 # Dev servers get their own home and port, so they run beside the installed app's server (launchd, port 7747).
@@ -17,7 +17,11 @@ dev:             ## Run server (dev home) + web UI in a browser at http://localh
 server:          ## Run only the server (dev home)
 	$(DEV_ENV) cargo run -p atelier-server
 
-app:             ## Run the desktop app against a fresh dev server (dev home, port $(DEV_PORT))
+app:             ## Run the desktop app over your real data (~/.atelier, port 7747), pausing the installed server
+	cargo build -p atelier-server
+	./scripts/app-real.sh
+
+app-dev:         ## Run the desktop app against a fresh dev server (dev home, port $(DEV_PORT))
 	cargo build -p atelier-server
 	@# The app reuses a server already on its port; make sure that's the one just built.
 	-@lsof -ti tcp:$(DEV_PORT) -sTCP:LISTEN | xargs kill 2>/dev/null

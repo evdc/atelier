@@ -9,7 +9,7 @@ import { route } from "../lib/router";
 import { byRecent, createView } from "../lib/view";
 import { trackViewport } from "../lib/viewport";
 import { Ctx } from "./context";
-import { AllSessionsView, WaitingView } from "./Inbox";
+import { AllSessionsView, NewAnywhereView, WaitingView } from "./Inbox";
 import { ProjectsView } from "./ProjectsView";
 import { SessionsView } from "./SessionsView";
 import { Footer } from "./Footer";
@@ -63,6 +63,9 @@ export function App(props: { conn: Conn }) {
             </Match>
             <Match when={route().name === "waiting"}>
               <WaitingView />
+            </Match>
+            <Match when={route().name === "new"}>
+              <NewAnywhereView />
             </Match>
             <Match when={route().name === "all"}>
               <AllSessionsView />

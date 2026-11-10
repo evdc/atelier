@@ -2,21 +2,26 @@
 .PHONY: help dev server web app bundle ios-dev ios-build ios-run ios-device gen test check fmt
 
 HOME_DEV ?= $(HOME)/.atelier-dev
+# Dev servers get their own home and port, so they run beside the installed app's server (launchd, port 7747).
+DEV_PORT ?= 7748
+DEV_ENV = ATELIER_HOME=$(HOME_DEV) ATELIER_LISTEN=127.0.0.1:$(DEV_PORT) ATELIER_URL=ws://127.0.0.1:$(DEV_PORT)/ws
 
 help:            ## List tasks
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*## /\t/'
 
 dev:             ## Run server (dev home) + web UI in a browser at http://localhost:5173
 	cargo build -p atelier-server
-	ATELIER_HOME=$(HOME_DEV) ./target/debug/atelierd & \
-	ATELIER_HOME=$(HOME_DEV) pnpm -C web dev; kill %1
+	$(DEV_ENV) ./target/debug/atelierd & \
+	$(DEV_ENV) pnpm -C web dev; kill %1
 
 server:          ## Run only the server (dev home)
-	ATELIER_HOME=$(HOME_DEV) cargo run -p atelier-server
+	$(DEV_ENV) cargo run -p atelier-server
 
-app:             ## Run the desktop app (starts its own server in ~/.atelier if none is running)
+app:             ## Run the desktop app against a fresh dev server (dev home, port $(DEV_PORT))
 	cargo build -p atelier-server
-	cd app && cargo tauri dev
+	@# The app reuses a server already on its port; make sure that's the one just built.
+	-@lsof -ti tcp:$(DEV_PORT) -sTCP:LISTEN | xargs kill 2>/dev/null
+	cd app && $(DEV_ENV) cargo tauri dev
 
 IOS_SIM ?= iPhone 17 Pro
 IOS_APP := app/gen/apple/build/arm64-sim/Atelier.app

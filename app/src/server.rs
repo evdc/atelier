@@ -26,7 +26,7 @@ pub fn ensure_running() -> Result<Target, Box<dyn std::error::Error>> {
     let home = local::home().ok_or("no home directory")?;
     // Create the token now, so it's known before the server finishes starting.
     let token = local::token(&home)?;
-    let addr = SocketAddr::from(([127, 0, 0, 1], local::DEFAULT_PORT));
+    let addr = local_addr();
     let up = TcpStream::connect_timeout(&addr, Duration::from_millis(150)).is_ok();
     let bin = server_bin();
     let mut started = false;
@@ -42,6 +42,20 @@ pub fn ensure_running() -> Result<Target, Box<dyn std::error::Error>> {
         spawn_detached(&home)?;
     }
     Ok(Target { url: format!("ws://{addr}/ws"), token })
+}
+
+/// Where the local server listens: `ATELIER_LISTEN` (set by `make app`, so a dev server runs beside the installed
+/// one), else the default port. The server spawned below inherits the same variable.
+fn local_addr() -> SocketAddr {
+    std::env::var("ATELIER_LISTEN")
+        .ok()
+        .and_then(|a| a.parse().ok())
+        .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], local::DEFAULT_PORT)))
+}
+
+/// Whether this app's server is the launchd login item. A dev build's isn't, even while the installed one is loaded.
+fn under_launchd() -> bool {
+    launchd::applies(&server_bin()) && launchd::loaded()
 }
 
 fn spawn_detached(home: &std::path::Path) -> std::io::Result<()> {
@@ -95,7 +109,7 @@ pub async fn server_status() -> Result<Status, String> {
     let home = local::home().ok_or("no home directory")?;
     let health = health();
     Ok(Status {
-        manager: if launchd::loaded() { "launchd" } else { "other" },
+        manager: if under_launchd() { "launchd" } else { "other" },
         running: health.is_some(),
         server: health,
         app_version: APP_VERSION,
@@ -106,7 +120,7 @@ pub async fn server_status() -> Result<Status, String> {
 
 #[tauri::command]
 pub async fn server_restart() -> Result<(), String> {
-    if !launchd::loaded() {
+    if !under_launchd() {
         return Err("This server wasn't started by launchd; restart it where it runs.".into());
     }
     launchd::kickstart().map_err(|e| e.to_string())
@@ -118,7 +132,7 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// answer is one small JSON object, which isn't worth an HTTP client.
 fn health() -> Option<String> {
     use std::io::{Read, Write};
-    let addr = SocketAddr::from(([127, 0, 0, 1], local::DEFAULT_PORT));
+    let addr = local_addr();
     let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(300)).ok()?;
     s.set_read_timeout(Some(Duration::from_millis(500))).ok()?;
     s.write_all(b"GET /health HTTP/1.0\r\nHost: localhost\r\n\r\n").ok()?;

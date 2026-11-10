@@ -12,7 +12,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use atelier_core::Seq;
 use atelier_core::stream::StreamFilter;
-use atelier_proto::{ClientMsg, PROTOCOL, ServerMsg, SubId, ViewName, WatchId};
+use atelier_proto::{ClientMsg, PROTOCOL, RpcId, ServerMsg, SubId, ViewName, WatchId};
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
 use futures::{SinkExt, StreamExt};
 use tokio::sync::{Notify, broadcast, mpsc};
@@ -123,6 +123,15 @@ pub async fn connection(app: App, socket: WebSocket, peer: Option<IpAddr>) {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!("bad client frame: {e}");
+                // An RPC we can't read (typically a newer client's method) must still be answered, or its caller
+                // waits forever.
+                if let Some(id) = rpc_id(&text) {
+                    let error = format!(
+                        "the server can't handle this request ({e}); it may be older than this app, so update or \
+                         restart it"
+                    );
+                    out.send(&ServerMsg::Error { id, error });
+                }
                 continue;
             }
         };
@@ -167,6 +176,15 @@ pub async fn connection(app: App, socket: WebSocket, peer: Option<IpAddr>) {
         t.abort();
     }
     finish(out, writer).await;
+}
+
+/// The id of a frame that is an RPC, even one whose call doesn't parse.
+fn rpc_id(text: &str) -> Option<RpcId> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    if v["t"] != "rpc" {
+        return None;
+    }
+    v["id"].as_u64()?.try_into().ok()
 }
 
 async fn finish(out: Outbox, writer: JoinHandle<()>) {

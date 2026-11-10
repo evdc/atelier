@@ -328,6 +328,9 @@ async fn session_rename_over_websocket() {
     assert!(why.contains("empty"), "{why}");
     let why = rpc_err(&mut c, "session.rename", json!({"session": sid, "title": "x".repeat(201)})).await;
     assert!(why.contains("longer"), "{why}");
+    // A method this server doesn't know (a newer client's) is answered with an error, not ignored.
+    let why = rpc_err(&mut c, "no.such.method", json!({})).await;
+    assert!(why.contains("older than this app"), "{why}");
 
     // The turn ends (the fake agent's request id is "r1"); the name holds.
     c.rpc("session.answer", json!({"session": sid, "request_id": "r1", "decision": {"behavior": "allow"}})).await;

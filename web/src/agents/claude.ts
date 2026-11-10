@@ -25,6 +25,18 @@ interface CcMessage {
   model?: string;
   message?: { id?: string; content?: Block[] | string; usage?: unknown };
   parent_tool_use_id?: string | null;
+  isMeta?: boolean;
+}
+
+/** The text a person typed in a `user` entry; tool results carry none. */
+function typedText(content: Block[] | string | undefined): string {
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((b) => b.type === "text" && b.text)
+    .map((b) => b.text!.trim())
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 export const claude: Adapter = {
@@ -49,6 +61,10 @@ export const claude: Adapter = {
         }
       });
     } else if (ev.kind === "cc.user") {
+      // Live sessions show the person's typing as `user.message`; imported history only has this
+      // entry, so its typed text has to surface here. Meta entries are CC bookkeeping, not typing.
+      const typed = m.isMeta ? "" : typedText(m.message?.content);
+      if (typed) t.items.push({ k: "user", id: `e${ev.seq}`, ts: ev.ts, text: typed });
       for (const b of blocks) {
         if (b.type !== "tool_result" || !b.tool_use_id) continue;
         const item = t.items[t.tools[b.tool_use_id] ?? -1];

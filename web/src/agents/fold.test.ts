@@ -39,6 +39,15 @@ describe("fold", () => {
     expect(perm?.k === "permission" && perm.state).toBe("allowed");
   });
 
+  it("shows the typed text of an imported user entry, but not meta or tool results", () => {
+    const t = emptyTranscript();
+    fold(t, ev("cc.user", { type: "user", message: { content: "first question" } }));
+    fold(t, ev("cc.user", { type: "user", isMeta: true, message: { content: "caveat" } }));
+    fold(t, ev("cc.user", { type: "user", message: { content: [{ type: "text", text: "  block form  " }] } }));
+    fold(t, ev("cc.user", { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "x", content: "out" }] } }));
+    expect(t.items.map((i) => (i.k === "user" ? i.text : i.k))).toEqual(["first question", "block form"]);
+  });
+
   it("voids pending requests when the process exits", () => {
     const t = emptyTranscript();
     fold(t, ev("permission.requested", { request_id: "r", tool: "Bash", input: {}, raw: {} }));

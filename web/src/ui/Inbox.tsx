@@ -1,8 +1,10 @@
 // Cross-project session lists: what is waiting on you (the phone's home), and everything.
 
-import { For, Show, type JSX } from "solid-js";
+import { createSignal, For, Show, type JSX } from "solid-js";
 import type { SessionRow } from "../gen/SessionRow";
 import { waitingList } from "../lib/phone";
+import { href } from "../lib/router";
+import { NewSession } from "./NewSession";
 import { useApp } from "./context";
 import { SessionRowLink } from "./SessionRowLink";
 
@@ -32,7 +34,14 @@ export function AllSessionsView() {
   const visible = () => sessions.list().filter((s) => !s.archived);
   const isActive = (s: SessionRow) => s.status === "running" || s.status === "waiting";
   return (
-    <Page title="Sessions">
+    <Page
+      title="Sessions"
+      action={
+        <a class="btn" href={href({ name: "new" })} title="New session">
+          New
+        </a>
+      }
+    >
       <Show when={visible().some(isActive)}>
         <Group label="Active" rows={visible().filter(isActive)} />
       </Show>
@@ -48,11 +57,39 @@ export function AllSessionsView() {
   );
 }
 
-function Page(props: { title: string; children: JSX.Element }) {
+/** Start a session without first going to a project: pick the project here. */
+export function NewAnywhereView() {
+  const { projects, sessions } = useApp();
+  const [chosen, setChosen] = createSignal<string>();
+  // Default to the project touched most recently.
+  const fallback = () => {
+    const recent = sessions.list().reduce<SessionRow | undefined>((a, s) => (!a || s.updated_at > a.updated_at ? s : a), undefined)?.project;
+    return projects.get(recent ?? "")?.id ?? projects.list()[0]?.id;
+  };
+  const project = () => projects.get(chosen() ?? fallback() ?? "");
+  return (
+    <Page title="New session">
+      <div class="new">
+        <label>
+          Project
+          <select class="field" value={project()?.id ?? ""} onChange={(e) => setChosen(e.currentTarget.value)}>
+            <For each={projects.list()}>{(p) => <option value={p.id}>{p.name}</option>}</For>
+          </select>
+        </label>
+      </div>
+      <Show when={project()?.id} keyed>
+        {(id) => <NewSession project={projects.get(id)!} />}
+      </Show>
+    </Page>
+  );
+}
+
+function Page(props: { title: string; action?: JSX.Element; children: JSX.Element }) {
   return (
     <section class="list inbox">
       <header class="list-h">
         <h2>{props.title}</h2>
+        {props.action}
       </header>
       <div class="pane">{props.children}</div>
     </section>

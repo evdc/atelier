@@ -1367,3 +1367,26 @@
     font-size: 12.5px;
   }
 }
+
+/* swipe-left-to-archive on a session row (touch) */
+.swipe {
+  position: relative;
+  overflow: hidden;
+}
+.swipe .row {
+  position: relative;
+  background: var(--paper);
+  touch-action: pan-y;
+}
+.swipe-act {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  font: 12px var(--f-mono);
+  color: var(--ink-3);
+}
+.swipe-act.armed {
+  color: var(--ink);
+}

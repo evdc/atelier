@@ -37,3 +37,15 @@ export function keyboardInset(layoutH: number, vvH: number, vvTop: number, scale
   const covered = layoutH - vvH - vvTop;
   return covered > 100 ? covered : 0;
 }
+
+/** Row swipe: a leftward drag that is mostly horizontal. Returns the distance to follow, or null to let the page scroll. */
+export function rowSwipe(dx: number, dy: number): number | "pending" | null {
+  if (Math.abs(dx) < SLOP_PX && Math.abs(dy) < SLOP_PX) return "pending";
+  if (dx >= 0 || Math.abs(dy) > Math.abs(dx)) return null;
+  return dx;
+}
+
+/** On release: dragged far enough left to mean "archive". */
+export function rowSwipeCommits(dx: number, width: number): boolean {
+  return -dx >= Math.min(96, width * 0.3);
+}

@@ -40,7 +40,12 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             }
             let id = SessionId::generate();
             let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| title_from(&prompt));
-            let ws = workspace::prepare(&app.config.worktrees_dir(), &p, &id, &title, workspace).await?;
+            let in_use: Vec<String> = {
+                let pid = p.id.0.clone();
+                let rows = app.store.read(move |c| views::sessions::list(c, Some(&pid))).await?;
+                rows.into_iter().filter(|s| !s.archived).map(|s| s.workspace.path).collect()
+            };
+            let ws = workspace::prepare(&app.config.worktrees_dir(), &p, &id, &title, workspace, &in_use).await?;
             let s_stream = stream::session(&p.id, &id);
             let created = SessionCreated {
                 id: id.clone(),
@@ -95,10 +100,13 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             if s.workspace.mode == WorkspaceMode::Worktree && !s.archived {
                 let p = project_row(app, s.project.as_str()).await?;
                 match workspace::unsafe_to_remove(&p, &s.workspace).await {
-                    Ok(None) => match workspace::remove(&p, &s.workspace).await {
-                        Ok(()) => {
-                            let gone =
-                                WorkspaceRemoved { path: s.workspace.path.clone(), branch: s.workspace.branch.clone() };
+                    Ok(None) => match workspace::release(&p, &s.workspace).await {
+                        Ok(pooled) => {
+                            let gone = WorkspaceRemoved {
+                                path: s.workspace.path.clone(),
+                                branch: s.workspace.branch.clone(),
+                                pooled,
+                            };
                             app.store.append_one(NewEvent::new(&s.stream, Actor::User, &gone)).await?;
                             result.removed = true;
                         }

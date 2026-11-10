@@ -77,6 +77,11 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(ok, "git {args:?}");
 }
 
+fn git_out(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
 fn session_row_matches(m: &Value, pred: impl Fn(&Value) -> bool) -> bool {
     m["t"] == "patch" && m["upsert"].as_array().is_some_and(|rows| rows.iter().any(&pred))
 }
@@ -540,7 +545,11 @@ async fn worktree_changes_and_archive_cleanup() {
         (Path::new(ws["path"].as_str().unwrap()).to_owned(), ws["branch"].as_str().unwrap().to_owned());
     let r = c.rpc("session.archive", json!({"session": clean})).await;
     assert_eq!(r["removed"], true, "{r}");
-    assert!(!cpath.exists());
+    // The directory is pooled: kept (detached) for the next session, along with its ignored files.
+    assert!(cpath.exists());
+    assert!(git_out(&cpath, &["branch", "--show-current"]).is_empty());
+    std::fs::write(repo.join(".git/info/exclude"), "warm.marker\n").unwrap();
+    std::fs::write(cpath.join("warm.marker"), "x").unwrap();
     let branches = std::process::Command::new("git").arg("-C").arg(&repo).args(["branch", "--list"]).output().unwrap();
     let branches = String::from_utf8_lossy(&branches.stdout);
     assert!(!branches.contains(&cbranch) && branches.contains(&branch), "{branches}");
@@ -552,6 +561,12 @@ async fn worktree_changes_and_archive_cleanup() {
     c.until(|m| session_row_matches(m, |r| r["id"] == unmerged && r["status"] == "waiting")).await;
     let row = c.seen.iter().rev().find(|m| session_row_matches(m, |r| r["id"] == unmerged)).unwrap().clone();
     let upath = Path::new(row["upsert"][0]["workspace"]["path"].as_str().unwrap()).to_owned();
+    assert_eq!(upath, cpath, "the pooled worktree is reused");
+    assert!(upath.join("warm.marker").exists());
+    assert_eq!(
+        git_out(&upath, &["branch", "--show-current"]),
+        row["upsert"][0]["workspace"]["branch"].as_str().unwrap()
+    );
     std::fs::write(upath.join("b.txt"), "b\n").unwrap();
     git(&upath, &["add", "."]);
     git(&upath, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "b"]);

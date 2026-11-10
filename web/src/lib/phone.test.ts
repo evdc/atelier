@@ -19,6 +19,7 @@ const row = (id: string, status: SessionRow["status"], updated_at: number, archi
   created_at: 0,
   updated_at,
   archived,
+  imported: false,
 });
 
 describe("waitingList", () => {

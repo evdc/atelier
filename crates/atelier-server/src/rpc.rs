@@ -90,6 +90,12 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                     (ws, fresh.then(|| p.path.clone()))
                 }
             };
+            let prompt = match &source {
+                Some(owner) if workspace == WorkspaceMode::Worktree => {
+                    branch_prompt(owner.status == SessionStatus::Running, &prompt)
+                }
+                _ => prompt,
+            };
             let ws_path = ws.path.clone();
             let s_stream = stream::session(&p.id, &id);
             let created = SessionCreated {
@@ -156,6 +162,8 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             Ok(Value::Null)
         }
         Call::SessionArchive { session } => {
+            // Held from the readers check to the release, so two archives of one worktree can't both release it.
+            let _archive = ARCHIVE_LOCK.lock().await;
             let s = session_row(app, &session).await?;
             app.supervisor.stop(&s.id);
             app.store.append_one(NewEvent::new(&s.stream, Actor::User, &SessionArchived {})).await?;
@@ -173,9 +181,7 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                         // A reader never touches the worktree; the last one out releases an archived owner's.
                         let owner_id = s.workspace.from.clone().context("a shared workspace without its owner")?;
                         let owner = session_row(app, &owner_id).await?;
-                        let oid = owner_id.as_str().to_owned();
-                        let gone = app.store.read(move |c| views::sessions::worktree_removed(c, &oid)).await?;
-                        if owner.archived && !gone && readers_of(app, &owner).await?.is_empty() {
+                        if owner.archived && readers_of(app, &owner).await?.is_empty() {
                             result = remove_worktree(app, &p, &owner).await?;
                         }
                     }
@@ -274,6 +280,11 @@ async fn readers_of(app: &App, owner: &SessionRow) -> Result<Vec<SessionRow>> {
 
 /// Deletes the worktree of `s` if nothing in it would be lost, and records the removal on `s`'s stream.
 async fn remove_worktree(app: &App, p: &ProjectRow, s: &SessionRow) -> Result<Archived> {
+    // Re-checked under the archive lock: the worktree may already have gone with an earlier archive.
+    let id = s.id.as_str().to_owned();
+    if app.store.read(move |c| views::sessions::worktree_removed(c, &id)).await? {
+        return Ok(Archived { removed: false, kept: None });
+    }
     let kept = match workspace::unsafe_to_remove(p, &s.workspace).await {
         Ok(None) => match workspace::release(p, &s.workspace).await {
             Ok(pooled) => {
@@ -288,6 +299,22 @@ async fn remove_worktree(app: &App, p: &ProjectRow, s: &SessionRow) -> Result<Ar
         Err(e) => format!("couldn't inspect the worktree: {e}"),
     };
     Ok(Archived { removed: false, kept: Some(kept) })
+}
+
+/// Serializes session archives, so the last reader and the owner can't both release the same worktree.
+static ARCHIVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Put in front of a branch's first message: the branch's base is a snapshot, so merging it back can conflict.
+const BRANCH_NOTE: &str = "This session's branch starts at a snapshot of its source's working tree, not at a commit \
+    the source made. If the source commits the same edits and this branch is merged back into it, the merge may \
+    conflict; if it does, keep both sides' intent.";
+/// Added when the source was mid-turn: some of its files may have been half-written.
+const RUNNING_NOTE: &str = "The source was running when this snapshot was taken, so some of its files may have been \
+    mid-edit.";
+
+fn branch_prompt(source_running: bool, prompt: &str) -> String {
+    let running = if source_running { format!("{RUNNING_NOTE}\n\n") } else { String::new() };
+    format!("{running}{BRANCH_NOTE}\n\n{prompt}")
 }
 
 async fn project_add(app: &App, path: String, name: Option<String>) -> Result<Value> {
@@ -352,5 +379,13 @@ mod tests {
         let long = "Rate limit login attempts per IP and per account, but never lock anyone out for good";
         let t = title_from(long);
         assert!(t.ends_with('…') && t.chars().count() <= 61, "{t}");
+    }
+
+    #[test]
+    fn branch_prompt_adds_the_running_note_only_when_the_source_was_running() {
+        let idle = branch_prompt(false, "try it");
+        assert_eq!(idle, format!("{BRANCH_NOTE}\n\ntry it"));
+        let running = branch_prompt(true, "try it");
+        assert_eq!(running, format!("{RUNNING_NOTE}\n\n{BRANCH_NOTE}\n\ntry it"));
     }
 }

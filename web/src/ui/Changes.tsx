@@ -61,7 +61,7 @@ export function MergeButton(props: { row: Accessor<SessionRow>; refresh: () => v
       });
   };
   return (
-    <Show when={s().workspace.branch && !s().archived}>
+    <Show when={s().workspace.branch && !s().archived && s().workspace.mode !== "shared"}>
       <span class={`merge ${props.class ?? ""}`}>
         <button
           class="btn"

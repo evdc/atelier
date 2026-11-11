@@ -552,6 +552,25 @@ async fn workspaces_from_other_sessions() {
     let cws = row["upsert"][0]["workspace"].clone();
     let cpath = Path::new(cws["path"].as_str().unwrap()).to_owned();
     assert_ne!(cpath, opath);
+    // The stored first message carries the snapshot note ahead of the prompt. The owner was waiting, not running,
+    // so the running note is absent.
+    let child_stream = format!("p/{}/s/{}", project.as_str().unwrap(), child.as_str().unwrap());
+    c.send(json!({"t": "sub", "id": 9, "filter": {"stream": child_stream}, "from": 1})).await;
+    c.until(|m| m["t"] == "live" && m["sub"] == 9).await;
+    let first = c
+        .seen
+        .iter()
+        .filter(|m| m["t"] == "events" && m["sub"] == 9)
+        .flat_map(kinds_in)
+        .find(|(k, _)| k == "user.message")
+        .expect("the branch's first message")
+        .1["text"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(first.starts_with("This session's branch starts at a snapshot of its source's working tree"), "{first}");
+    assert!(first.ends_with("\n\nalt"), "{first}");
+    assert!(!first.contains("mid-edit"), "{first}");
     assert_eq!((cws["mode"].as_str(), cws["from"].clone()), (Some("worktree"), owner.clone()), "{cws}");
     assert!(cws["snapshot"].is_string(), "{cws}");
     assert_eq!(cws["base"], cws["snapshot"]);

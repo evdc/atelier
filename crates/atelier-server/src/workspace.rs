@@ -132,9 +132,16 @@ const SNAPSHOT_IDENTITY: &[(&str, &str)] = &[
 ];
 
 async fn write_tree(dir: &Path, index: &Path) -> Result<String> {
-    let index = index.to_string_lossy();
-    let env = [("GIT_INDEX_FILE", index.as_ref())];
-    git_env_raw(dir, &env, &["read-tree", "HEAD"]).await?;
+    let index_s = index.to_string_lossy();
+    let env = [("GIT_INDEX_FILE", index_s.as_ref())];
+    // Start from the source's own index, so what it has staged stays staged in the snapshot. Only a repo with no
+    // index yet starts from HEAD. The source's index is read, never written.
+    let source_index = dir.join(git(dir, &["rev-parse", "--git-path", "index"]).await?);
+    if tokio::fs::try_exists(&source_index).await? {
+        tokio::fs::copy(&source_index, index).await?;
+    } else {
+        git_env_raw(dir, &env, &["read-tree", "HEAD"]).await?;
+    }
     git_env_raw(dir, &env, &["add", "-A"]).await?;
     git_env(dir, &env, &["write-tree"]).await
 }

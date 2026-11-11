@@ -21,6 +21,8 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("binding {listen} (is another atelierd running?)"))?;
     tracing::info!("listening on {listen}");
+    // Agents started from here on get Atelier's MCP tools.
+    app.supervisor.set_mcp_addr(listener.local_addr()?);
 
     if app.config.listen_tailscale {
         tokio::spawn(serve_tailnet(app.clone(), listen.port()));

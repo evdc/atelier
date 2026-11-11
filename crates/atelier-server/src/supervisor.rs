@@ -13,14 +13,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use atelier_core::domain::*;
-use atelier_core::{Actor, NewEvent, SessionId};
-use atelier_driver::{AgentCmd, AgentDriver, DriverEvent, Resume, StartSpec};
+use atelier_core::{Actor, NewEvent, Seq, SessionId};
+use atelier_driver::{AgentCmd, AgentDriver, DriverEvent, McpEndpoint, Resume, StartSpec};
 use atelier_proto::{SessionRow, SessionStatus};
 use atelier_store::Store;
 use serde_json::value::RawValue;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::{autotitle, views};
+use crate::{autotitle, mcp, views};
 
 /// A live-only event (token deltas, status pings). Never persisted.
 #[derive(Debug)]
@@ -45,6 +45,12 @@ struct Inner {
     generation: AtomicU64,
     /// The `claude` binary for one-shot titles; `None` turns them off.
     title_bin: Option<PathBuf>,
+    /// Where agents reach the MCP server (`http://127.0.0.1:<port>/mcp`); set once the loopback listener is bound.
+    /// Until then agents start without Atelier tools.
+    mcp_url: Mutex<Option<String>>,
+    /// MCP bearer token → the session whose process holds it. Runtime state like `actors`: a token lives as long
+    /// as its process, so it is never logged.
+    mcp_tokens: Mutex<HashMap<String, SessionId>>,
 }
 
 /// How often the reaper looks for idle processes.
@@ -73,8 +79,22 @@ impl Supervisor {
                 pending: Mutex::default(),
                 generation: AtomicU64::new(0),
                 title_bin,
+                mcp_url: Mutex::default(),
+                mcp_tokens: Mutex::default(),
             }),
         }
+    }
+
+    /// Tell agents where the (loopback) MCP endpoint is. Processes started from now on get Atelier's tools.
+    pub fn set_mcp_addr(&self, addr: std::net::SocketAddr) {
+        let host = if addr.ip().is_unspecified() { std::net::Ipv4Addr::LOCALHOST.into() } else { addr.ip() };
+        let url = format!("http://{}/mcp", std::net::SocketAddr::new(host, addr.port()));
+        *self.inner.mcp_url.lock().unwrap() = Some(url);
+    }
+
+    /// The session behind an MCP bearer token, if its process is still alive.
+    pub fn session_for_token(&self, token: &str) -> Option<SessionId> {
+        self.inner.mcp_tokens.lock().unwrap().get(token).cloned()
     }
 
     pub fn ephemeral(&self) -> broadcast::Receiver<Arc<Ephemeral>> {
@@ -149,13 +169,15 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Append the user's message and deliver it, starting the agent if needed.
-    pub async fn send(&self, s: &SessionRow, text: String) -> Result<()> {
+    /// Append a message from `actor` and deliver it, starting the agent if needed.
+    pub async fn send(&self, s: &SessionRow, actor: Actor, cause: Option<Seq>, text: String) -> Result<()> {
         if s.archived {
             bail!("session is archived");
         }
         self.wait_stopped(&s.id).await?;
-        self.append(s, Actor::User, &UserMessage { text: text.clone() }).await?;
+        let mut msg = NewEvent::new(s.stream.clone(), actor, &UserMessage { text: text.clone() });
+        msg.cause = cause;
+        self.inner.store.append_one(msg).await?;
         let cmds = self.ensure_running(s).await?;
         cmds.send(AgentCmd::Send(text)).map_err(|_| anyhow!("agent exited before receiving the message"))
     }
@@ -242,11 +264,31 @@ impl Supervisor {
             resume,
             model: s.model.clone(),
             read_only: s.workspace.mode == WorkspaceMode::Shared,
+            mcp: None,
+            system_append: None,
         };
+        // Minted per process: a resume gets a new one, and the old one dies with its process.
+        let token = self.inner.mcp_url.lock().unwrap().clone().map(|url| {
+            let token = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+            self.inner.mcp_tokens.lock().unwrap().insert(token.clone(), s.id.clone());
+            (url, token)
+        });
+        let spec = match &token {
+            Some((url, token)) => StartSpec {
+                mcp: Some(McpEndpoint { url: url.clone(), token: token.clone() }),
+                system_append: Some(mcp::system_prompt(&s.id, &s.title)),
+                ..spec
+            },
+            None => spec,
+        };
+        let token = token.map(|(_, t)| t);
 
         let handle = match self.inner.driver.start(spec) {
             Ok(h) => h,
             Err(e) => {
+                if let Some(t) = &token {
+                    self.inner.mcp_tokens.lock().unwrap().remove(t);
+                }
                 let body = ProcessExited {
                     reason: ExitReason::SpawnFailed,
                     code: None,
@@ -266,7 +308,7 @@ impl Supervisor {
             s.id.clone(),
             Proc { generation, cmds: handle.cmds.clone(), last_active: Instant::now(), reaping: reaping.clone() },
         );
-        tokio::spawn(self.clone().pump(s.id.clone(), s.stream.clone(), generation, reaping, handle.events));
+        tokio::spawn(self.clone().pump(s.id.clone(), s.stream.clone(), generation, reaping, token, handle.events));
         Ok(handle.cmds)
     }
 
@@ -277,6 +319,7 @@ impl Supervisor {
         stream: String,
         generation: u64,
         reaping: Arc<AtomicBool>,
+        token: Option<String>,
         mut events: mpsc::Receiver<DriverEvent>,
     ) {
         let actor = Actor::Agent(id.clone());
@@ -318,6 +361,9 @@ impl Supervisor {
             if turn_ok {
                 self.spawn_auto_title(&id, &stream);
             }
+        }
+        if let Some(t) = token {
+            self.inner.mcp_tokens.lock().unwrap().remove(&t);
         }
         self.forget(&id, generation);
     }

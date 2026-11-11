@@ -75,6 +75,8 @@ async fn drives_a_process_end_to_end() {
             resume: Resume::New,
             model: None,
             read_only: false,
+            mcp: None,
+            system_append: None,
         })
         .unwrap();
     h.cmds.send(AgentCmd::Send("hello".into())).unwrap();
@@ -138,4 +140,57 @@ fn deny_carries_the_reason_as_message() {
     let v: Value = serde_json::from_str(&line).unwrap();
     assert_eq!(v["response"]["response"]["behavior"], "deny");
     assert_eq!(v["response"]["response"]["message"], "use cargo test");
+}
+
+fn args_of(spec: &StartSpec) -> Vec<String> {
+    let (cmd, _) = ClaudeCode::default().command(spec);
+    cmd.as_std().get_args().map(|a| a.to_string_lossy().into_owned()).collect()
+}
+
+fn spec() -> StartSpec {
+    StartSpec {
+        session: SessionId::generate(),
+        cwd: std::env::temp_dir(),
+        resume: Resume::New,
+        model: None,
+        read_only: false,
+        mcp: None,
+        system_append: None,
+    }
+}
+
+fn after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.iter().position(|a| a == flag).map(|i| args[i + 1].as_str())
+}
+
+#[test]
+fn no_mcp_means_no_mcp_flags() {
+    let args = args_of(&spec());
+    for flag in ["--mcp-config", "--allowedTools", "--append-system-prompt"] {
+        assert!(!args.iter().any(|a| a == flag), "{flag}");
+    }
+}
+
+#[test]
+fn mcp_config_carries_url_token_and_allowed_tools() {
+    let args = args_of(&StartSpec {
+        mcp: Some(crate::McpEndpoint { url: "http://127.0.0.1:1/mcp".into(), token: "tok".into() }),
+        system_append: Some("You are s1.".into()),
+        ..spec()
+    });
+    let cfg: Value = serde_json::from_str(after(&args, "--mcp-config").unwrap()).unwrap();
+    let server = &cfg["mcpServers"]["atelier"];
+    assert_eq!(server["type"], "http");
+    assert_eq!(server["url"], "http://127.0.0.1:1/mcp");
+    assert_eq!(server["headers"]["Authorization"], "Bearer tok");
+    assert_eq!(after(&args, "--allowedTools"), Some("mcp__atelier__sessions,mcp__atelier__read"));
+    assert_eq!(after(&args, "--append-system-prompt"), Some("You are s1."));
+}
+
+#[test]
+fn read_only_note_and_system_append_share_one_flag() {
+    let args = args_of(&StartSpec { read_only: true, system_append: Some("You are s1.".into()), ..spec() });
+    assert_eq!(args.iter().filter(|a| *a == "--append-system-prompt").count(), 1);
+    let text = after(&args, "--append-system-prompt").unwrap();
+    assert!(text.starts_with("You are in another session's worktree") && text.ends_with("\n\nYou are s1."), "{text}");
 }

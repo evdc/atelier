@@ -9,6 +9,7 @@
 
 pub mod projects;
 pub mod sessions;
+pub mod text;
 pub mod usage;
 
 use anyhow::Result;

@@ -11,6 +11,7 @@ pub mod autotitle;
 pub mod browse;
 pub mod config;
 pub mod import;
+pub mod mcp;
 pub mod rpc;
 pub mod supervisor;
 pub mod sync;
@@ -27,7 +28,7 @@ use atelier_store::Store;
 use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 
 pub use config::Config;
@@ -65,9 +66,14 @@ impl App {
         Ok(Self { config: Arc::new(config), store, supervisor, stopping, peers, import_lock: Default::default() })
     }
 
-    /// For the loopback listener: every client needs the token.
+    /// For the loopback listener: every client needs the token. Agents reach `/mcp` here with their own
+    /// per-process token; it is deliberately absent from the tailnet router.
     pub fn router(&self) -> Router {
-        Router::new().route("/ws", get(ws)).route("/health", get(health)).with_state(self.clone())
+        Router::new()
+            .route("/ws", get(ws))
+            .route("/health", get(health))
+            .route("/mcp", post(mcp::endpoint))
+            .with_state(self.clone())
     }
 
     /// For the tailnet listener: the token, or a peer Tailscale vouches for.

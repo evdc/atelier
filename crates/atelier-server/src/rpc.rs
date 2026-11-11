@@ -6,13 +6,17 @@
 //! `fs.suggest` return a computed snapshot of the filesystem (git's view of a
 //! worktree, a directory listing). That's a read, like `cat`, not state of the
 //! system; nothing is logged for it.
+//!
+//! Every call runs *as* someone: the person (`Actor::User`) or an agent (`Actor::Agent`, from the MCP server).
+//! The actor and the event that caused the call go onto everything the call appends. Agents may not make
+//! every call ([`Call::agent_allowed`]).
 
 use anyhow::{Context, Result, bail};
 use atelier_core::domain::{
     AgentKind, ProjectAdded, ProjectRemoved, SessionArchived, SessionCreated, SessionRenamed, SessionUnarchived,
     WorkspaceMode, WorkspaceRemoved,
 };
-use atelier_core::{Actor, NewEvent, SessionId, stream};
+use atelier_core::{Actor, NewEvent, Seq, SessionId, stream};
 use atelier_proto::{Archived, Call, ProjectRow, SessionRow, SessionStatus};
 use serde_json::{Value, json};
 
@@ -20,9 +24,12 @@ use crate::{App, browse, views, workspace};
 
 const MAX_TITLE_CHARS: usize = 200;
 
-pub async fn handle(app: &App, call: Call) -> Result<Value> {
+pub async fn handle(app: &App, actor: Actor, cause: Option<Seq>, call: Call) -> Result<Value> {
+    if matches!(actor, Actor::Agent(_)) && !call.agent_allowed() {
+        bail!("only a person can do that");
+    }
     match call {
-        Call::ProjectAdd { path, name } => project_add(app, path, name).await,
+        Call::ProjectAdd { path, name } => project_add(app, &actor, cause, path, name).await,
         Call::ProjectRemove { project } => {
             let p = project_row(app, project.as_str()).await?;
             let id = p.id.0.clone();
@@ -30,7 +37,7 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             if live.iter().any(|s| s.alive) {
                 bail!("{} has running agents; stop them first", p.name);
             }
-            app.store.append_one(NewEvent::new(stream::GLOBAL, Actor::User, &ProjectRemoved { id: p.id })).await?;
+            app.store.append_one(event(stream::GLOBAL, &actor, cause, &ProjectRemoved { id: p.id })).await?;
             Ok(Value::Null)
         }
         Call::SessionCreate { project, prompt, workspace, title, model, from } => {
@@ -108,7 +115,7 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                 origin: None,
                 started_at: None,
             };
-            app.store.append_one(NewEvent::new(&s_stream, Actor::User, &created)).await?;
+            app.store.append_one(event(&s_stream, &actor, cause, &created)).await?;
             let s = session_row(app, &id).await?;
             // Seeding can take a long time on a big repo. The session exists already, so answer now
             // and start the agent once the worktree is warm.
@@ -117,7 +124,7 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                 if let Some(src) = seed_from {
                     workspace::seed(std::path::Path::new(&src), std::path::Path::new(&ws_path)).await;
                 }
-                if let Err(e) = app.supervisor.send(&s, prompt).await {
+                if let Err(e) = app.supervisor.send(&s, actor, cause, prompt).await {
                     tracing::error!("starting session {}: {e:#}", s.id.as_str());
                 }
             });
@@ -134,7 +141,7 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             if app.store.read(move |c| views::sessions::worktree_removed(c, &id)).await? {
                 bail!("its worktree was removed when it was archived; start a new session");
             }
-            app.supervisor.send(&s, text).await?;
+            app.supervisor.send(&s, actor.clone(), cause, text).await?;
             Ok(Value::Null)
         }
         Call::SessionInterrupt { session } => {
@@ -154,7 +161,7 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                 bail!("the title is longer than {MAX_TITLE_CHARS} characters");
             }
             let s = session_row(app, &session).await?;
-            app.store.append_one(NewEvent::new(&s.stream, Actor::User, &SessionRenamed { title })).await?;
+            app.store.append_one(event(&s.stream, &actor, cause, &SessionRenamed { title })).await?;
             Ok(Value::Null)
         }
         Call::SessionStop { session } => {
@@ -166,7 +173,7 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
             let _archive = ARCHIVE_LOCK.lock().await;
             let s = session_row(app, &session).await?;
             app.supervisor.stop(&s.id);
-            app.store.append_one(NewEvent::new(&s.stream, Actor::User, &SessionArchived {})).await?;
+            app.store.append_one(event(&s.stream, &actor, cause, &SessionArchived {})).await?;
             let mut result = Archived { removed: false, kept: None };
             if !s.archived {
                 let p = project_row(app, s.project.as_str()).await?;
@@ -175,14 +182,14 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                         // The worktree outlives its owner while someone reads it; the last reader to leave
                         // releases it (see the `Shared` arm).
                         Some(r) => result.kept = Some(format!("{} is reading this worktree", r.title)),
-                        None => result = remove_worktree(app, &p, &s).await?,
+                        None => result = remove_worktree(app, &actor, cause, &p, &s).await?,
                     },
                     WorkspaceMode::Shared => {
                         // A reader never touches the worktree; the last one out releases an archived owner's.
                         let owner_id = s.workspace.from.clone().context("a shared workspace without its owner")?;
                         let owner = session_row(app, &owner_id).await?;
                         if owner.archived && readers_of(app, &owner).await?.is_empty() {
-                            result = remove_worktree(app, &p, &owner).await?;
+                            result = remove_worktree(app, &actor, cause, &p, &owner).await?;
                         }
                     }
                     WorkspaceMode::Direct => {}
@@ -193,7 +200,7 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
         Call::SessionUnarchive { session } => {
             let s = session_row(app, &session).await?;
             if s.archived {
-                app.store.append_one(NewEvent::new(&s.stream, Actor::User, &SessionUnarchived {})).await?;
+                app.store.append_one(event(&s.stream, &actor, cause, &SessionUnarchived {})).await?;
             }
             Ok(Value::Null)
         }
@@ -219,7 +226,7 @@ pub async fn handle(app: &App, call: Call) -> Result<Value> {
                      Don't abort the merge.",
                     r.target
                 );
-                app.supervisor.send(&s, text).await?;
+                app.supervisor.send(&s, actor.clone(), cause, text).await?;
             }
             Ok(serde_json::to_value(r)?)
         }
@@ -278,8 +285,25 @@ async fn readers_of(app: &App, owner: &SessionRow) -> Result<Vec<SessionRow>> {
         .collect())
 }
 
+fn event<B: atelier_core::EventBody>(
+    stream: impl Into<String>,
+    actor: &Actor,
+    cause: Option<Seq>,
+    body: &B,
+) -> NewEvent {
+    let mut e = NewEvent::new(stream, actor.clone(), body);
+    e.cause = cause;
+    e
+}
+
 /// Deletes the worktree of `s` if nothing in it would be lost, and records the removal on `s`'s stream.
-async fn remove_worktree(app: &App, p: &ProjectRow, s: &SessionRow) -> Result<Archived> {
+async fn remove_worktree(
+    app: &App,
+    actor: &Actor,
+    cause: Option<Seq>,
+    p: &ProjectRow,
+    s: &SessionRow,
+) -> Result<Archived> {
     // Re-checked under the archive lock: the worktree may already have gone with an earlier archive.
     let id = s.id.as_str().to_owned();
     if app.store.read(move |c| views::sessions::worktree_removed(c, &id)).await? {
@@ -290,7 +314,7 @@ async fn remove_worktree(app: &App, p: &ProjectRow, s: &SessionRow) -> Result<Ar
             Ok(pooled) => {
                 let gone =
                     WorkspaceRemoved { path: s.workspace.path.clone(), branch: s.workspace.branch.clone(), pooled };
-                app.store.append_one(NewEvent::new(&s.stream, Actor::User, &gone)).await?;
+                app.store.append_one(event(&s.stream, actor, cause, &gone)).await?;
                 return Ok(Archived { removed: true, kept: None });
             }
             Err(e) => format!("couldn't remove the worktree: {e}"),
@@ -317,7 +341,13 @@ fn branch_prompt(source_running: bool, prompt: &str) -> String {
     format!("{running}{BRANCH_NOTE}\n\n{prompt}")
 }
 
-async fn project_add(app: &App, path: String, name: Option<String>) -> Result<Value> {
+async fn project_add(
+    app: &App,
+    actor: &Actor,
+    cause: Option<Seq>,
+    path: String,
+    name: Option<String>,
+) -> Result<Value> {
     let path = browse::expand_home(&path);
     let path = tokio::fs::canonicalize(&path).await.with_context(|| format!("{} doesn't exist", path.display()))?;
     if !path.is_dir() {
@@ -342,7 +372,7 @@ async fn project_add(app: &App, path: String, name: Option<String>) -> Result<Va
         is_git: workspace::is_git(&path).await,
     };
     let id = added.id.clone();
-    app.store.append_one(NewEvent::new(stream::GLOBAL, Actor::User, &added)).await?;
+    app.store.append_one(event(stream::GLOBAL, actor, cause, &added)).await?;
     Ok(json!({ "id": id }))
 }
 

@@ -1,0 +1,477 @@
+//! The tool table. Output is text for the model, not JSON.
+
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use anyhow::Context;
+use atelier_core::{Event, Seq, SessionId};
+use atelier_proto::SessionRow;
+use rusqlite::Connection;
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use super::BoxFut;
+use crate::App;
+use crate::views::{self, text};
+
+pub enum ToolError {
+    /// The arguments don't fit the tool's schema: a protocol error.
+    Params(String),
+    /// The tool ran and failed in a way the model can read.
+    Failed(String),
+}
+
+impl From<anyhow::Error> for ToolError {
+    fn from(e: anyhow::Error) -> Self {
+        ToolError::Failed(format!("{e:#}"))
+    }
+}
+
+pub struct Tool {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub schema: fn() -> Value,
+    pub run: for<'a> fn(&'a App, &'a SessionId, Value) -> BoxFut<'a, Result<String, ToolError>>,
+}
+
+impl Tool {
+    pub fn listing(&self) -> Value {
+        json!({ "name": self.name, "description": self.description, "inputSchema": (self.schema)() })
+    }
+}
+
+pub static TOOLS: &[Tool] = &[
+    Tool {
+        name: "sessions",
+        description: "List Atelier sessions (other agents' conversations): id, title, status, branch, last activity. \
+            Defaults to your own project, without archived sessions. Look here for a session that may already know \
+            what you need, then use `read`.",
+        schema: sessions_schema,
+        run: |app, me, args| Box::pin(async move { sessions(app, me, parse(args)?).await }),
+    },
+    Tool {
+        name: "read",
+        description: "Read what was said in a session: its user messages, the agent's replies and a line per tool \
+            call (not tool output). Newest last. Shows the latest part by default; use `before` to go further \
+            back or `around` to see the context of one message.",
+        schema: read_schema,
+        run: |app, _me, args| Box::pin(async move { read(app, parse(args)?).await }),
+    },
+];
+
+fn parse<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, ToolError> {
+    serde_json::from_value(args).map_err(|e| ToolError::Params(format!("invalid arguments: {e}")))
+}
+
+// ─── sessions ────────────────────────────────────────────────────────────────
+
+const MAX_SESSIONS: usize = 50;
+
+fn sessions_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": { "type": "string", "description": "Project id. Default: your own project." },
+            "status": { "type": "string", "enum": ["idle", "running", "waiting", "failed"] },
+            "include_archived": { "type": "boolean", "description": "Default false." },
+        },
+    })
+}
+
+#[derive(Deserialize)]
+struct SessionsArgs {
+    project: Option<String>,
+    status: Option<String>,
+    #[serde(default)]
+    include_archived: bool,
+}
+
+async fn sessions(app: &App, me: &SessionId, args: SessionsArgs) -> Result<String, ToolError> {
+    if let Some(s) = &args.status
+        && !["idle", "running", "waiting", "failed"].contains(&s.as_str())
+    {
+        return Err(ToolError::Params(format!("status `{s}` is not one of idle, running, waiting, failed")));
+    }
+    let id = me.clone();
+    let own = app.store.read(move |c| views::sessions::get(c, id.as_str())).await?.context("your session is gone")?;
+    let project = args.project.unwrap_or_else(|| own.project.0.clone());
+    let p = project.clone();
+    if app.store.read(move |c| views::projects::get(c, &p)).await?.is_none() {
+        return Err(ToolError::Failed(format!("no such project `{project}`")));
+    }
+    let rows = app.store.read(move |c| views::sessions::list(c, Some(&project))).await?;
+    let rows: Vec<SessionRow> = rows
+        .into_iter()
+        .filter(|r| args.include_archived || !r.archived)
+        .filter(|r| args.status.as_deref().is_none_or(|s| r.status.as_str() == s))
+        .collect();
+    Ok(format_sessions(&rows, me, now_ms()))
+}
+
+fn format_sessions(rows: &[SessionRow], me: &SessionId, now: i64) -> String {
+    if rows.is_empty() {
+        return "No sessions match.".into();
+    }
+    let mut out: Vec<String> = rows.iter().take(MAX_SESSIONS).map(|r| session_line(r, me, now)).collect();
+    if rows.len() > MAX_SESSIONS {
+        out.push(format!("(+{} more, narrow with `status`, or `project`)", rows.len() - MAX_SESSIONS));
+    }
+    out.join("\n")
+}
+
+/// `id · title · status · branch · updated · from <parent>`, with your own row marked.
+fn session_line(r: &SessionRow, me: &SessionId, now: i64) -> String {
+    let title = r.title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut parts = vec![
+        r.id.0.clone(),
+        title,
+        r.status.as_str().to_owned(),
+        r.workspace.branch.clone().unwrap_or_else(|| "-".into()),
+        ago(now, r.updated_at),
+    ];
+    if let Some(from) = &r.workspace.from {
+        parts.push(format!("from {from}"));
+    }
+    if r.archived {
+        parts.push("archived".into());
+    }
+    let line = parts.join(" · ");
+    if &r.id == me { format!("{line} (you)") } else { line }
+}
+
+fn ago(now: i64, then: i64) -> String {
+    let s = ((now - then) / 1000).max(0);
+    match s {
+        0..=59 => "just now".into(),
+        60..=3599 => format!("{}m ago", s / 60),
+        3600..=86399 => format!("{}h ago", s / 3600),
+        _ => format!("{}d ago", s / 86400),
+    }
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+}
+
+// ─── read ────────────────────────────────────────────────────────────────────
+
+const DEFAULT_CHARS: usize = 8_000;
+const MAX_CHARS: usize = 32_000;
+
+fn read_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session": { "type": "string", "description": "Session id, from `sessions`." },
+            "around": { "type": "integer", "description": "Event number (#n): show the messages around it." },
+            "before": { "type": "integer", "description": "Event number (#n): show the messages before it." },
+            "max_chars": { "type": "integer", "description": "Default 8000, at most 32000." },
+        },
+        "required": ["session"],
+    })
+}
+
+#[derive(Deserialize)]
+struct ReadArgs {
+    session: String,
+    around: Option<Seq>,
+    before: Option<Seq>,
+    max_chars: Option<usize>,
+}
+
+async fn read(app: &App, args: ReadArgs) -> Result<String, ToolError> {
+    if args.around.is_some() && args.before.is_some() {
+        return Err(ToolError::Params("use either `around` or `before`, not both".into()));
+    }
+    let max = args.max_chars.unwrap_or(DEFAULT_CHARS).clamp(1, MAX_CHARS);
+    let id = args.session.clone();
+    let Some(s) = app.store.read(move |c| views::sessions::get(c, &id)).await? else {
+        return Err(ToolError::Failed(format!("no such session `{}`", args.session)));
+    };
+    let window = match (args.around, args.before) {
+        (Some(a), _) => Window::Around(a),
+        (_, Some(b)) => Window::Before(b),
+        _ => Window::Tail,
+    };
+    let stream = s.stream.clone();
+    let page = app.store.read(move |c| page(c, &stream, window, max)).await?;
+    Ok(format!("Session {} · {}\n{}", s.id, s.title.split_whitespace().collect::<Vec<_>>().join(" "), page.render()))
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Window {
+    /// The newest messages.
+    Tail,
+    /// The newest messages with a seq below this.
+    Before(Seq),
+    /// Messages on both sides of this seq.
+    Around(Seq),
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Page {
+    /// `(seq, role, text)`, oldest first.
+    pub lines: Vec<(Seq, &'static str, String)>,
+    /// Conversation events before the first line / after the last.
+    pub earlier: i64,
+    pub later: i64,
+    pub first: Option<Seq>,
+    pub last: Option<Seq>,
+    around: bool,
+}
+
+impl Page {
+    pub fn render(&self) -> String {
+        let mut out = Vec::new();
+        if let (n @ 1.., Some(first)) = (self.earlier, self.first) {
+            out.push(format!("({n} earlier — read with before={first})"));
+        }
+        out.extend(self.lines.iter().map(|(seq, role, text)| format!("#{seq} {role}: {text}")));
+        if let (n @ 1.., Some(last), true) = (self.later, self.last, self.around) {
+            out.push(format!("({n} later — read with around={last})"));
+        }
+        if self.lines.is_empty() && out.is_empty() {
+            out.push("(nothing said here yet)".into());
+        }
+        out.join("\n")
+    }
+}
+
+const CONVERSATION: &str = "kind IN ('user.message', 'cc.assistant')";
+
+/// Up to `budget` chars of one side of `pivot`, cut at line boundaries (the first line is cut to fit if it
+/// alone is too long). Reads rows lazily, so cost follows the budget, not the session's length.
+fn scan(
+    c: &Connection,
+    stream: &str,
+    lo: Seq,
+    hi: Seq,
+    newest_first: bool,
+    mut budget: usize,
+) -> anyhow::Result<Vec<(Seq, &'static str, String)>> {
+    let order = if newest_first { "DESC" } else { "ASC" };
+    let mut q = c.prepare_cached(&format!(
+        "SELECT seq, stream, ts, kind, actor, cause, body FROM events
+         WHERE stream = ?1 AND seq >= ?2 AND seq <= ?3 AND {CONVERSATION} ORDER BY seq {order}"
+    ))?;
+    let mut rows = q.query(rusqlite::params![stream, lo, hi])?;
+    let mut out: Vec<(Seq, &'static str, String)> = Vec::new();
+    'rows: while let Some(r) = rows.next()? {
+        let body: String = r.get(6)?;
+        let Ok(body) = serde_json::value::RawValue::from_string(body) else { continue };
+        let ev = Event {
+            seq: r.get(0)?,
+            stream: r.get(1)?,
+            ts: r.get(2)?,
+            kind: r.get(3)?,
+            actor: r.get(4)?,
+            cause: r.get(5)?,
+            body,
+        };
+        let mut docs = text::docs(&ev);
+        if newest_first {
+            docs.reverse();
+        }
+        for d in docs {
+            let cost = d.text.chars().count() + 16;
+            if cost > budget && !out.is_empty() {
+                break 'rows;
+            }
+            let text =
+                if cost > budget { d.text.chars().take(budget.saturating_sub(16).max(1)).collect() } else { d.text };
+            budget = budget.saturating_sub(cost);
+            out.push((ev.seq, d.role.as_str(), text));
+        }
+        if budget == 0 {
+            break;
+        }
+    }
+    if newest_first {
+        out.reverse();
+    }
+    Ok(out)
+}
+
+fn count(c: &Connection, stream: &str, lo: Seq, hi: Seq) -> anyhow::Result<i64> {
+    Ok(c.query_row(
+        &format!("SELECT COUNT(*) FROM events WHERE stream = ?1 AND seq >= ?2 AND seq <= ?3 AND {CONVERSATION}"),
+        rusqlite::params![stream, lo, hi],
+        |r| r.get(0),
+    )?)
+}
+
+pub(crate) fn page(c: &Connection, stream: &str, window: Window, max_chars: usize) -> anyhow::Result<Page> {
+    let (lines, around) = match window {
+        Window::Tail => (scan(c, stream, 0, Seq::MAX, true, max_chars)?, false),
+        Window::Before(b) => (scan(c, stream, 0, b.saturating_sub(1), true, max_chars)?, false),
+        Window::Around(a) => {
+            let mut lines = scan(c, stream, 0, a, true, max_chars.div_ceil(2))?;
+            let used: usize = lines.iter().map(|l| l.2.chars().count() + 16).sum();
+            lines.extend(scan(c, stream, a.saturating_add(1), Seq::MAX, false, max_chars.saturating_sub(used))?);
+            (lines, true)
+        }
+    };
+    let (first, last) = (lines.first().map(|l| l.0), lines.last().map(|l| l.0));
+    // Counted from the edges of what was returned; with nothing returned, the edge is the window's own.
+    let earlier = match (first, window) {
+        (Some(f), _) => count(c, stream, 0, f - 1)?,
+        (None, Window::Before(b)) => count(c, stream, 0, b.saturating_sub(1))?,
+        (None, Window::Around(a)) => count(c, stream, 0, a)?,
+        (None, Window::Tail) => 0,
+    };
+    let later = match last {
+        Some(l) if around => count(c, stream, l + 1, Seq::MAX)?,
+        _ => 0,
+    };
+    Ok(Page { lines, earlier, later, first, last, around })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use atelier_core::domain::{UserMessage, Workspace, WorkspaceMode};
+    use atelier_core::{Actor, NewEvent};
+    use atelier_proto::SessionStatus;
+    use atelier_store::Store;
+    use serde_json::value::RawValue;
+
+    const STREAM: &str = "p/p1/s/s1";
+
+    fn row(id: &str, title: &str, updated_at: i64) -> SessionRow {
+        SessionRow {
+            id: id.into(),
+            project: "p1".into(),
+            stream: format!("p/p1/s/{id}"),
+            title: title.into(),
+            agent: atelier_core::domain::AgentKind::ClaudeCode,
+            workspace: Workspace {
+                mode: WorkspaceMode::Worktree,
+                path: "/w".into(),
+                branch: Some(format!("atelier/{id}")),
+                base: None,
+                from: None,
+                snapshot: None,
+            },
+            model: None,
+            status: SessionStatus::Idle,
+            alive: false,
+            pending: 0,
+            turns: 0,
+            cost_usd: 0.0,
+            created_at: 0,
+            updated_at,
+            archived: false,
+            imported: false,
+        }
+    }
+
+    #[test]
+    fn sessions_list_marks_you_and_shows_relative_time() {
+        let now = 10_000_000_000;
+        let mut other = row("b", "Fix  the\nWAL", now - 3 * 3_600_000);
+        other.workspace.from = Some("a".into());
+        other.status = SessionStatus::Running;
+        let mut old = row("c", "Old", now - 3 * 86_400_000);
+        old.archived = true;
+        old.workspace.branch = None;
+        let out = format_sessions(&[row("a", "Me", now - 5 * 60_000), other, old], &"a".into(), now);
+        assert_eq!(
+            out,
+            "a · Me · idle · atelier/a · 5m ago (you)\n\
+             b · Fix the WAL · running · atelier/b · 3h ago · from a\n\
+             c · Old · idle · - · 3d ago · archived"
+        );
+        assert_eq!(format_sessions(&[], &"a".into(), now), "No sessions match.");
+    }
+
+    #[test]
+    fn sessions_list_is_capped() {
+        let rows: Vec<_> = (0..60).map(|i| row(&format!("s{i}"), "t", 0)).collect();
+        let out = format_sessions(&rows, &"x".into(), 0);
+        assert_eq!(out.lines().count(), MAX_SESSIONS + 1);
+        assert!(out.ends_with("(+10 more, narrow with `status`, or `project`)"));
+    }
+
+    async fn store_with(messages: &[&str]) -> (Store, tempfile::TempDir, Vec<Seq>) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("db"), vec![]).unwrap();
+        let mut seqs = Vec::new();
+        for (i, m) in messages.iter().enumerate() {
+            // Alternate user and agent, with a tool result in between that must never show up.
+            let ev = if i % 2 == 0 {
+                NewEvent::new(STREAM, Actor::User, &UserMessage { text: (*m).into() })
+            } else {
+                let body = json!({"message": {"content": [{"type": "text", "text": m}]}}).to_string();
+                NewEvent::raw(STREAM, "cc.assistant", Actor::Agent("s1".into()), RawValue::from_string(body).unwrap())
+            };
+            seqs.push(store.append_one(ev).await.unwrap().seq);
+            let noise = json!({"message": {"content": [{"type": "tool_result", "content": "NOISE"}]}}).to_string();
+            let ev = NewEvent::raw(STREAM, "cc.user", Actor::Agent("s1".into()), RawValue::from_string(noise).unwrap());
+            store.append_one(ev).await.unwrap();
+        }
+        (store, dir, seqs)
+    }
+
+    fn texts(p: &Page) -> Vec<&str> {
+        p.lines.iter().map(|l| l.2.as_str()).collect()
+    }
+
+    #[tokio::test]
+    async fn read_defaults_to_the_newest_messages_oldest_first() {
+        let (store, _d, seqs) = store_with(&["one", "two", "three", "four"]).await;
+        let p = store.read(|c| page(c, STREAM, Window::Tail, 8_000)).await.unwrap();
+        assert_eq!(texts(&p), ["one", "two", "three", "four"]);
+        assert_eq!(p.earlier, 0);
+        assert_eq!(
+            p.render(),
+            format!(
+                "#{} user: one\n#{} agent: two\n#{} user: three\n#{} agent: four",
+                seqs[0], seqs[1], seqs[2], seqs[3]
+            )
+        );
+        assert!(!p.render().contains("NOISE"));
+    }
+
+    #[tokio::test]
+    async fn read_cuts_at_the_budget_and_says_how_to_continue() {
+        let (store, _d, seqs) = store_with(&["one", "two", "three", "four"]).await;
+        // Each line costs its text plus 16; room for two lines of ~4 chars, not three.
+        let p = store.read(|c| page(c, STREAM, Window::Tail, 45)).await.unwrap();
+        assert_eq!(texts(&p), ["three", "four"]);
+        assert_eq!(p.earlier, 2);
+        assert!(p.render().starts_with(&format!("(2 earlier — read with before={})\n", seqs[2])));
+
+        let before = seqs[2];
+        let p = store.read(move |c| page(c, STREAM, Window::Before(before), 8_000)).await.unwrap();
+        assert_eq!(texts(&p), ["one", "two"]);
+        assert_eq!(p.earlier, 0);
+    }
+
+    #[tokio::test]
+    async fn read_around_takes_both_sides() {
+        let (store, _d, seqs) = store_with(&["a1", "b2", "c3", "d4", "e5", "f6"]).await;
+        let at = seqs[2];
+        // Half the budget goes back from #c3 (inclusive), the rest forward.
+        let p = store.read(move |c| page(c, STREAM, Window::Around(at), 80)).await.unwrap();
+        assert_eq!(texts(&p), ["b2", "c3", "d4", "e5"]);
+        assert_eq!((p.earlier, p.later), (1, 1));
+        let r = p.render();
+        assert!(r.starts_with("(1 earlier"), "{r}");
+        assert!(r.ends_with(&format!("(1 later — read with around={})", seqs[4])), "{r}");
+    }
+
+    #[tokio::test]
+    async fn read_cuts_an_oversized_first_line_instead_of_returning_nothing() {
+        let long = "x".repeat(500);
+        let (store, _d, _) = store_with(&[&long]).await;
+        let p = store.read(|c| page(c, STREAM, Window::Tail, 100)).await.unwrap();
+        assert_eq!(p.lines.len(), 1);
+        assert!(p.lines[0].2.len() < 100);
+    }
+
+    #[tokio::test]
+    async fn an_empty_session_says_so() {
+        let (store, _d, _) = store_with(&[]).await;
+        let p = store.read(|c| page(c, STREAM, Window::Tail, 100)).await.unwrap();
+        assert_eq!(p.render(), "(nothing said here yet)");
+    }
+}

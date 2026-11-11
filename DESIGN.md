@@ -121,6 +121,11 @@ claude -p --input-format stream-json --output-format stream-json --verbose
 | Fork at arbitrary message | ✅ `--resume <id> --fork-session --resume-session-at <assistant-msg-uuid>` → new session id, memory truncated at that message (undocumented flag — wrap behind driver, test on upgrade) |
 | Partial streaming | ✅ `stream_event` deltas |
 | Cost/usage | ✅ per-turn `result.total_cost_usd`, `usage`; `rate_limit_event` gives subscription window utilization |
+| MCP servers (AT-026) | ✅ `--mcp-config '<json>'` with `{"type":"http","url":…,"headers":{"Authorization":"Bearer …"}}` connects *alongside* the user's own servers (it shows in the init message as source `dynamic`); tools are `mcp__<server>__<tool>`. Under `--permission-mode auto`, `--allowedTools mcp__atelier__sessions,…` runs without a prompt. Under stream-json CC lists deferred MCP tools behind its `ToolSearch`, which costs the model one extra step the first time. |
+| MCP tool timeout (AT-026) | ✅ A `tools/call` that takes 25 s completes with CC's default. `MCP_TOOL_TIMEOUT=<ms>` in the agent's environment governs it: at 5000 CC returns an error result `tool "x" timed out after 5s` and the turn goes on. The default is not 10 minutes' worth of tested: only 25 s was measured. |
+| Interrupting an MCP call (AT-026) | ✅ `control_request{subtype:"interrupt"}` during a running `tools/call` returns at once: the tool result is a rejection, the turn ends `error_during_execution`. The HTTP request is abandoned; the server must not assume its handler finishes. |
+| `--append-system-prompt` | ✅ works with stream-json input (a codeword in it was repeated by the model). One flag only: Atelier joins its notes into one value. |
+| `--disallowedTools SendMessage,ListAgents` | ✅ removes both from the init tool list. |
 | Transcript on disk | `~/.claude/projects/<cwd-slug>/<session>.jsonl`, entries linked by `uuid`/`parentUuid` — used for import & fork targets |
 
 Gotchas: without `--permission-prompt-tool stdio`, `--permission-prompts host` silently auto-denies. User hooks/plugins from `~/.claude` apply (good: parity with terminal use; but they can inject output — tolerate unknown event kinds).
@@ -624,5 +629,7 @@ This is mockup step 7, M9.
   - Name: "automations" is the plain word. Keep "workflow" for the multi-step `await` form, if we ever build it.
 - Sessions talking to sessions (§11):
   - CC ships its own cross-session `SendMessage`/`ListAgents` tools. Disable them in Atelier sessions
-    (`--disallowedTools`) so there is one mechanism, and it's logged? Leaning yes; verify in AT-026's spike.
+    (`--disallowedTools`) so there is one mechanism, and it's logged? Leaning yes. AT-026's spike: the flag
+    removes them. Recommendation: add it in AT-028, when `send` exists to replace them (until then they are the
+    only way for an agent to message anything, and a message that skips the log breaks rule 1).
   - Should `spawn` be pre-allowed instead of going through the permission mode? Start conservative.

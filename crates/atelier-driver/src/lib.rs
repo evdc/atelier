@@ -37,6 +37,18 @@ pub struct StartSpec {
     pub model: Option<String>,
     /// The workspace belongs to another session: no edits, and a note saying so.
     pub read_only: bool,
+    /// Where the agent finds Atelier's MCP server. `None`: the agent gets no Atelier tools.
+    pub mcp: Option<McpEndpoint>,
+    /// Appended to the agent's system prompt (after any note the driver adds itself).
+    pub system_append: Option<String>,
+}
+
+/// An MCP server over HTTP that the agent should connect to.
+#[derive(Debug, Clone)]
+pub struct McpEndpoint {
+    pub url: String,
+    /// Bearer token; identifies the session to the server.
+    pub token: String,
 }
 
 #[derive(Debug, Clone)]

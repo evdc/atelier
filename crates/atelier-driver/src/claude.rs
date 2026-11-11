@@ -29,6 +29,18 @@ use crate::{AgentCmd, AgentDriver, AgentHandle, DriverEvent, Resume, StartSpec};
 /// Event kinds are namespaced `cc.<type>`.
 pub const NS: &str = "cc";
 
+/// The MCP server name; tools show up as `mcp__atelier__<tool>`.
+pub const ATELIER_SERVER: &str = "atelier";
+/// Atelier tools an agent may call without asking. Add a row when the server gains a (safe) tool.
+const ATELIER_TOOL_NAMES: &[&str] = &["sessions", "read"];
+
+fn atelier_tools() -> String {
+    ATELIER_TOOL_NAMES.iter().map(|t| format!("mcp__{ATELIER_SERVER}__{t}")).collect::<Vec<_>>().join(",")
+}
+
+const READ_ONLY_NOTE: &str =
+    "You are in another session's worktree, read-only. Don't modify tracked files; build and test output is fine.";
+
 /// How long a stopping process gets before it is killed.
 const GRACE: Duration = Duration::from_secs(3);
 const STDERR_TAIL_LINES: usize = 20;
@@ -84,13 +96,28 @@ impl ClaudeCode {
         if let Some(model) = &spec.model {
             cmd.args(["--model", model]);
         }
+        let mut append: Vec<&str> = Vec::new();
         if spec.read_only {
             // A convention backed by the permission mode, not a sandbox: Bash can still write.
             cmd.args(["--disallowedTools", "Edit,Write,NotebookEdit"]);
-            cmd.args([
-                "--append-system-prompt",
-                "You are in another session's worktree, read-only. Don't modify tracked files; build and test output is fine.",
-            ]);
+            append.push(READ_ONLY_NOTE);
+        }
+        if let Some(mcp) = &spec.mcp {
+            // Alongside the user's own MCP servers (no --strict-mcp-config). The tools are Atelier's own and
+            // read-only, so they run without a prompt.
+            let config = json!({ "mcpServers": { ATELIER_SERVER: {
+                "type": "http",
+                "url": mcp.url,
+                "headers": { "Authorization": format!("Bearer {}", mcp.token) },
+            } } });
+            cmd.args(["--mcp-config", &config.to_string(), "--allowedTools", &atelier_tools()]);
+        }
+        if let Some(extra) = &spec.system_append {
+            append.push(extra);
+        }
+        if !append.is_empty() {
+            // One flag: a repeated one may replace the earlier value.
+            cmd.args(["--append-system-prompt", &append.join("\n\n")]);
         }
         // Agents run in their own worktree; build-tool env inherited from wherever atelierd was started
         // would point their cargo runs back at another checkout.

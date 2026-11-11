@@ -162,7 +162,7 @@ pub async fn connection(app: App, socket: WebSocket, peer: Option<IpAddr>) {
             ClientMsg::Rpc { id, call } => {
                 let (app, out) = (app.clone(), out.clone());
                 tokio::spawn(async move {
-                    let reply = match rpc::handle(&app, call).await {
+                    let reply = match rpc::handle(&app, atelier_core::Actor::User, None, call).await {
                         Ok(ok) => ServerMsg::Result { id, ok },
                         Err(e) => ServerMsg::Error { id, error: format!("{e:#}") },
                     };

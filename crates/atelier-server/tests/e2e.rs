@@ -645,6 +645,8 @@ async fn boot_with(tmp: &Path, idle_timeout: Duration, auto_title: bool) -> (App
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(axum::serve(listener, app.router()).into_future());
+    // Agents started from here on get Atelier's MCP tools, as under `atelierd`.
+    app.supervisor.set_mcp_addr(addr);
     (app, addr)
 }
 
@@ -851,4 +853,128 @@ async fn import_runs_only_on_request_and_only_adds_what_is_new() {
     assert_eq!(kinds.iter().filter(|k| *k == "cc.assistant").count(), 1);
     let blob = serde_json::to_string(&c.seen).unwrap();
     assert!(!blob.contains("SIG"), "thinking signatures are stripped");
+}
+
+/// One HTTP request over a plain socket: `(status, body)`.
+async fn http(addr: SocketAddr, method: &str, path: &str, bearer: Option<&str>, body: &str) -> (u16, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let auth = bearer.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
+    let req = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {addr}\r\n{auth}Content-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    let status = out.split_whitespace().nth(1).unwrap().parse().unwrap();
+    (status, out.split_once("\r\n\r\n").map(|x| x.1).unwrap_or_default().to_owned())
+}
+
+/// The first `cc.user` event in `stream`: what the fake agent printed after calling a tool.
+async fn tool_result(c: &mut Client, stream: &str, sub: u64) -> Value {
+    c.send(json!({"t": "sub", "id": sub, "filter": {"stream": stream}, "from": 1})).await;
+    let frame = c
+        .until(|m| {
+            m["t"] == "events"
+                && m["sub"] == sub
+                && m["events"].as_array().unwrap().iter().any(|e| e["kind"] == "cc.user")
+        })
+        .await;
+    let ev = frame["events"].as_array().unwrap().iter().find(|e| e["kind"] == "cc.user").unwrap().clone();
+    ev["body"]["message"]["content"][0]["content"].clone()
+}
+
+#[tokio::test]
+async fn agents_see_other_sessions_through_the_mcp_server() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"]);
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+
+    // A session that knows something.
+    let (project, other, _) = session_in_project(&mut c, &repo, "WAL checkpoint notes").await;
+
+    // An agent lists sessions and finds itself marked, next to the other one.
+    let me = c.rpc("session.create", json!({"project": project, "prompt": "MCP:sessions:{}"})).await;
+    let listing = tool_result(&mut c, me["stream"].as_str().unwrap(), 10).await;
+    assert!(listing.get("error").is_none(), "{listing}");
+    let text = listing["result"]["content"][0]["text"].as_str().unwrap();
+    let mine = text.lines().find(|l| l.starts_with(me["id"].as_str().unwrap())).unwrap_or_else(|| panic!("{text}"));
+    assert!(mine.ends_with("(you)"), "{text}");
+    assert!(text.contains(&format!("{} · WAL checkpoint notes", other.as_str().unwrap())), "{text}");
+
+    // Another reads that session and gets what was said in it.
+    let prompt = format!("MCP:read:{{\"session\":\"{}\"}}", other.as_str().unwrap());
+    let reader = c.rpc("session.create", json!({"project": project, "prompt": prompt})).await;
+    let read = tool_result(&mut c, reader["stream"].as_str().unwrap(), 11).await;
+    let text = read["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("user: WAL checkpoint notes") && text.contains("agent: hi"), "{text}");
+    assert!(!text.contains("Bash"), "a permission request isn't conversation: {text}");
+
+    // What the agent was started with: Atelier's server, its tools, and who it is.
+    let ws = c.rpc("session.create", json!({"project": project, "prompt": "MCP:sessions:{}"})).await;
+    tool_result(&mut c, ws["stream"].as_str().unwrap(), 12).await;
+    let wpath = {
+        let rows = app.store.read(|c| atelier_server::views::sessions::list(c, None)).await.unwrap();
+        rows.into_iter().find(|r| r.id.as_str() == ws["id"].as_str().unwrap()).unwrap().workspace.path
+    };
+    let args = std::fs::read_to_string(git_out_path(Path::new(&wpath), "--git-dir").join("atelier-fake-args")).unwrap();
+    assert!(args.contains("--allowedTools mcp__atelier__sessions,mcp__atelier__read"), "{args}");
+    assert!(args.contains(&format!("--append-system-prompt You are Atelier session {}", ws["id"].as_str().unwrap())));
+    let token = args.split("Bearer ").nth(1).unwrap().split('"').next().unwrap().to_owned();
+
+    // The endpoint wants that token: nothing, a wrong one or GET gets no further.
+    let ping = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+    assert_eq!(http(addr, "POST", "/mcp", None, ping).await.0, 401);
+    assert_eq!(http(addr, "POST", "/mcp", Some("nope"), ping).await.0, 401);
+    assert_eq!(http(addr, "GET", "/mcp", Some(&token), "").await.0, 405);
+    let (status, body) = http(addr, "POST", "/mcp", Some(&token), ping).await;
+    assert_eq!((status, body.contains("\"result\"")), (200, true), "{body}");
+    let note = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+    assert_eq!(http(addr, "POST", "/mcp", Some(&token), note).await.0, 202);
+
+    // The tailnet listener doesn't serve it at all, even for a valid token.
+    let tailnet = serve(app.clone(), true).await;
+    assert_eq!(http(tailnet, "POST", "/mcp", Some(&token), ping).await.0, 404);
+
+    // The token dies with its process.
+    c.rpc("session.stop", json!({"session": ws["id"]})).await;
+    c.until(|m| session_row_matches(m, |r| r["id"] == ws["id"] && r["alive"] == false)).await;
+    assert_eq!(http(addr, "POST", "/mcp", Some(&token), ping).await.0, 401);
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn calls_made_by_an_agent_are_attributed_to_it_and_limited() {
+    use atelier_core::{Actor, SessionId};
+    use atelier_proto::Call;
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"]);
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let (project, sid, stream) = session_in_project(&mut c, &repo, "hello").await;
+
+    let agent = Actor::Agent(SessionId::from(sid.as_str().unwrap()));
+    let rename = Call::SessionRename { session: SessionId::from(sid.as_str().unwrap()), title: "By itself".into() };
+    atelier_server::rpc::handle(&app, agent.clone(), Some(7), rename).await.unwrap();
+    let st = stream.clone();
+    let evs = app.store.events(atelier_core::stream::StreamFilter::Stream(st), 1, 1000).await.unwrap();
+    let renamed = evs.iter().find(|e| e.kind == "session.renamed").unwrap();
+    assert_eq!((renamed.actor.as_str(), renamed.cause), (format!("agent:{}", sid.as_str().unwrap()).as_str(), Some(7)));
+
+    // People only: removing projects and browsing the server's disk.
+    let remove = Call::ProjectRemove { project: project.as_str().unwrap().into() };
+    let err = atelier_server::rpc::handle(&app, agent.clone(), None, remove).await.unwrap_err();
+    assert!(format!("{err}").contains("only a person"), "{err}");
+    let err = atelier_server::rpc::handle(&app, agent, None, Call::FsSuggest {}).await.unwrap_err();
+    assert!(format!("{err}").contains("only a person"), "{err}");
+    app.supervisor.shutdown().await;
 }

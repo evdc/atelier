@@ -162,6 +162,14 @@ pub enum Call {
     FsSuggest {},
 }
 
+impl Call {
+    /// Whether an agent (through the MCP server) may make this call. Removing projects and browsing the
+    /// server's filesystem are for the person at the keyboard.
+    pub fn agent_allowed(&self) -> bool {
+        !matches!(self, Call::ProjectRemove { .. } | Call::FsList { .. } | Call::FsSuggest {})
+    }
+}
+
 /// Result of `project.import`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]

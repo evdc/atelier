@@ -30,6 +30,12 @@ export function summarize(name: string, input: unknown, cwd: string): string {
   }
 }
 
+/** The id in a `spawn` result ("started <id> '<title>' in …"), once the call has returned. */
+export function spawnedId(name: string, result: { text: string; error: boolean } | undefined): string | null {
+  if (name !== "mcp__atelier__spawn" || !result || result.error) return null;
+  return /^started (\S+) /.exec(result.text)?.[1] ?? null;
+}
+
 // ---- Rich tool views (pure; components live in ui/tools/) ----
 
 export interface DiffLine {

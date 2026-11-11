@@ -14,4 +14,8 @@ origin?: Origin | null,
  * Unix ms the conversation really began, for imports (an event's `ts` is
  * when it was appended, not when it happened).
  */
-started_at?: number | null, };
+started_at?: number | null, 
+/**
+ * The session that started this one (`spawn`).
+ */
+parent?: SessionId | null, };

@@ -21,4 +21,8 @@ pending: number, turns: number, cost_usd: number, created_at: number, updated_at
 /**
  * Read from the agent's own history rather than started here.
  */
-imported: boolean, };
+imported: boolean, 
+/**
+ * The session that spawned this one.
+ */
+parent: SessionId | null, };

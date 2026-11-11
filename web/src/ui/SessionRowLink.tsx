@@ -7,8 +7,19 @@ import { useApp } from "./context";
 
 /** One session in a list. `projectName` is shown in cross-project lists.
  *  On touch, swiping left archives it. */
-export function SessionRowLink(props: { s: SessionRow; on?: boolean; projectName?: string }) {
-  const { conn } = useApp();
+export function SessionRowLink(props: {
+  s: SessionRow;
+  on?: boolean;
+  projectName?: string;
+  /** Spawn depth in a nested list: one indent per level. */
+  depth?: number;
+  /** Spawned sessions folded away under this (archived) row. */
+  hidden?: number;
+  /** Name the parent, for lists where the child isn't shown under it (the inbox). */
+  showParent?: boolean;
+}) {
+  const { conn, sessions } = useApp();
+  const parent = () => (props.showParent && s().parent ? sessions.get(s().parent as string) : undefined);
   const s = () => props.s;
   const [armed, setArmed] = createSignal(false);
   let el: HTMLAnchorElement | undefined;
@@ -31,7 +42,7 @@ export function SessionRowLink(props: { s: SessionRow; on?: boolean; projectName
   };
 
   return (
-    <div class="swipe">
+    <div class="swipe" style={props.depth ? { "padding-left": `${props.depth * 16}px` } : undefined}>
       <span class="swipe-act" classList={{ armed: armed() }} aria-hidden="true">
         Archive
       </span>
@@ -85,6 +96,10 @@ export function SessionRowLink(props: { s: SessionRow; on?: boolean; projectName
           </Show>
           <Show when={props.projectName}>
             <span>{props.projectName}</span>
+          </Show>
+          <Show when={parent()}>{(p) => <span class="prov">spawned by "{p().title}"</span>}</Show>
+          <Show when={props.hidden}>
+            <span class="faint">+{props.hidden} spawned</span>
           </Show>
           <Show when={s().imported}>
             <span>imported</span>

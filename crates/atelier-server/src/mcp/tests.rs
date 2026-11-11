@@ -20,6 +20,7 @@ async fn app() -> (App, tempfile::TempDir) {
         claude_home: tmp.path().join("claude"),
         idle_timeout: Duration::from_secs(600),
         auto_title: false,
+        spawn: Default::default(),
         token: None,
     };
     std::fs::create_dir_all(&config.home).unwrap();
@@ -45,6 +46,7 @@ async fn session(app: &App, project: &ProjectId, title: &str) -> SessionId {
         model: None,
         origin: None,
         started_at: None,
+        parent: None,
     };
     app.store.append_one(NewEvent::new(stream::session(project, &id), Actor::User, &created)).await.unwrap();
     id
@@ -91,7 +93,7 @@ async fn tools_list_describes_every_tool() {
     let (app, _t) = app().await;
     let r = handle(&app, &SessionId::generate(), call(1, "tools/list", Value::Null)).await.unwrap();
     let names: Vec<_> = r["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["sessions", "read"]);
+    assert_eq!(names, ["sessions", "read", "spawn"]);
     for t in r["result"]["tools"].as_array().unwrap() {
         assert_eq!(t["inputSchema"]["type"], "object");
         assert!(!t["description"].as_str().unwrap().is_empty());

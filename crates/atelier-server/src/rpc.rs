@@ -40,8 +40,20 @@ pub async fn handle(app: &App, actor: Actor, cause: Option<Seq>, call: Call) -> 
             app.store.append_one(event(stream::GLOBAL, &actor, cause, &ProjectRemoved { id: p.id })).await?;
             Ok(Value::Null)
         }
-        Call::SessionCreate { project, prompt, workspace, title, model, from } => {
+        Call::SessionCreate { project, prompt, workspace, title, model, from, parent } => {
             let p = project_row(app, project.as_str()).await?;
+            if let Some(parent) = &parent {
+                let parent_row = session_row(app, parent).await?;
+                if parent_row.project.as_str() != p.id.as_str() {
+                    bail!("{} is in another project", parent_row.title);
+                }
+                if parent_row.archived {
+                    bail!("{} is archived", parent_row.title);
+                }
+                let pid = p.id.0.clone();
+                let rows = app.store.read(move |c| views::sessions::list(c, Some(&pid))).await?;
+                crate::spawn::check_limits(&rows, parent, &app.config.spawn).map_err(anyhow::Error::msg)?;
+            }
             if prompt.trim().is_empty() {
                 bail!("the first message can't be empty");
             }
@@ -114,6 +126,7 @@ pub async fn handle(app: &App, actor: Actor, cause: Option<Seq>, call: Call) -> 
                 model,
                 origin: None,
                 started_at: None,
+                parent,
             };
             app.store.append_one(event(&s_stream, &actor, cause, &created)).await?;
             let s = session_row(app, &id).await?;
@@ -244,7 +257,7 @@ pub async fn handle(app: &App, actor: Actor, cause: Option<Seq>, call: Call) -> 
 }
 
 /// The session a new session starts from: `from` itself, or the owner of the worktree when `from` is a reader.
-async fn source_session(app: &App, p: &ProjectRow, from: &SessionId) -> Result<SessionRow> {
+pub(crate) async fn source_session(app: &App, p: &ProjectRow, from: &SessionId) -> Result<SessionRow> {
     let s = session_row(app, from).await?;
     if s.project.as_str() != p.id.as_str() {
         bail!("{} is in another project", s.title);
@@ -376,7 +389,7 @@ async fn project_add(
     Ok(json!({ "id": id }))
 }
 
-async fn project_row(app: &App, id: &str) -> Result<ProjectRow> {
+pub(crate) async fn project_row(app: &App, id: &str) -> Result<ProjectRow> {
     let id = id.to_owned();
     app.store.read(move |c| views::projects::get(c, &id)).await?.context("no such project")
 }

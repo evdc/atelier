@@ -2,6 +2,7 @@ import { createSignal, For, Match, Show, Switch } from "solid-js";
 import type { Imported } from "../gen/Imported";
 import type { SessionRow } from "../gen/SessionRow";
 import { back, href } from "../lib/router";
+import { nest } from "../lib/tree";
 import { byRecent, createView } from "../lib/view";
 import { useApp } from "./context";
 import { EdgeSwipe } from "./EdgeSwipe";
@@ -70,15 +71,21 @@ export function SessionsView(props: { project: string; session?: string; creatin
           </Show>
           <Show when={active().length}>
             <div class="grp cap">Active</div>
-            <For each={active()}>{(s) => <SessionRowLink s={s} on={s.id === props.session} />}</For>
+            <For each={nest(active())}>
+              {(n) => <SessionRowLink s={n.row} on={n.row.id === props.session} depth={n.depth} hidden={n.hidden} />}
+            </For>
           </Show>
           <Show when={earlier().length}>
             <div class="grp cap">Earlier</div>
-            <For each={earlier()}>{(s) => <SessionRowLink s={s} on={s.id === props.session} />}</For>
+            <For each={nest(earlier())}>
+              {(n) => <SessionRowLink s={n.row} on={n.row.id === props.session} depth={n.depth} hidden={n.hidden} />}
+            </For>
           </Show>
           <Show when={shownArchived().length}>
             <div class="grp cap">Archived</div>
-            <For each={shownArchived()}>{(s) => <SessionRowLink s={s} on={s.id === props.session} />}</For>
+            <For each={nest(shownArchived())}>
+              {(n) => <SessionRowLink s={n.row} on={n.row.id === props.session} depth={n.depth} hidden={n.hidden} />}
+            </For>
           </Show>
         </div>
       </section>

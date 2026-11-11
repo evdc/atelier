@@ -101,7 +101,9 @@ function Group(props: { label: string; rows: SessionRow[] }) {
   return (
     <>
       <div class="grp cap">{props.label}</div>
-      <For each={props.rows}>{(s) => <SessionRowLink s={s} projectName={projects.get(s.project)?.name} />}</For>
+      <For each={props.rows}>
+        {(s) => <SessionRowLink s={s} projectName={projects.get(s.project)?.name} showParent />}
+      </For>
     </>
   );
 }

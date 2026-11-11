@@ -117,6 +117,7 @@ async fn session_lifecycle_over_websocket() {
         claude_home: tmp.path().join("claude"),
         idle_timeout: Duration::from_secs(600),
         auto_title: false,
+        spawn: Default::default(),
         token: Some("secret".into()),
     };
     std::fs::create_dir_all(&config.home).unwrap();
@@ -468,6 +469,7 @@ async fn tailnet_peers_and_tokens() {
         claude_home: tmp.path().join("claude"),
         idle_timeout: Duration::from_secs(600),
         auto_title: false,
+        spawn: Default::default(),
         token: Some("secret".into()),
     };
     std::fs::create_dir_all(&config.home).unwrap();
@@ -638,6 +640,7 @@ async fn boot_with(tmp: &Path, idle_timeout: Duration, auto_title: bool) -> (App
         claude_home: tmp.join("claude"),
         idle_timeout,
         auto_title,
+        spawn: Default::default(),
         token: Some("secret".into()),
     };
     std::fs::create_dir_all(&config.home).unwrap();
@@ -775,6 +778,7 @@ async fn import_runs_only_on_request_and_only_adds_what_is_new() {
         claude_home: tmp.path().join("claude"),
         idle_timeout: Duration::from_secs(600),
         auto_title: false,
+        spawn: Default::default(),
         token: Some("secret".into()),
     };
     // The history already exists when the project is added, as with a real `~/.claude`.
@@ -976,5 +980,86 @@ async fn calls_made_by_an_agent_are_attributed_to_it_and_limited() {
     assert!(format!("{err}").contains("only a person"), "{err}");
     let err = atelier_server::rpc::handle(&app, agent, None, Call::FsSuggest {}).await.unwrap_err();
     assert!(format!("{err}").contains("only a person"), "{err}");
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn agents_spawn_child_sessions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    c.send(json!({"t": "watch", "id": 2, "view": "sessions", "scope": project})).await;
+    c.until(|m| m["t"] == "snapshot" && m["watch"] == 2).await;
+
+    // The parent has an uncommitted file in its worktree, and holds an MCP token.
+    let parent = c.rpc("session.create", json!({"project": project, "prompt": "build"})).await["id"].clone();
+    let row = c.until(|m| session_row_matches(m, |r| r["id"] == parent && r["status"] == "waiting")).await;
+    let ppath = Path::new(row["upsert"][0]["workspace"]["path"].as_str().unwrap()).to_owned();
+    std::fs::write(ppath.join("wip.txt"), "uncommitted\n").unwrap();
+    let args = std::fs::read_to_string(git_out_path(&ppath, "--git-dir").join("atelier-fake-args")).unwrap();
+    assert!(!args.contains("mcp__atelier__spawn"), "spawn must go through the permission mode: {args}");
+    let token = args.split("Bearer ").nth(1).unwrap().split('"').next().unwrap().to_owned();
+    let mut n = 0;
+    let mut tool = |name: &'static str, a: Value| {
+        n += 1;
+        let body = json!({"jsonrpc": "2.0", "id": n, "method": "tools/call", "params": {"name": name, "arguments": a}});
+        let token = token.clone();
+        async move {
+            let (status, body) = http(addr, "POST", "/mcp", Some(&token), &body.to_string()).await;
+            assert_eq!(status, 200, "{body}");
+            let v: Value = serde_json::from_str(&body).unwrap();
+            (v["result"]["isError"] == true, v["result"]["content"][0]["text"].as_str().unwrap_or_default().to_owned())
+        }
+    };
+
+    // Default: a new worktree at a snapshot including the parent's uncommitted file.
+    let (is_err, text) = tool("spawn", json!({"task": "try the other way"})).await;
+    assert!(!is_err && text.starts_with("started "), "{text}");
+    let child = text.split_whitespace().nth(1).unwrap().to_owned();
+    let row = c.until(|m| session_row_matches(m, |r| r["id"] == child && r["status"] == "waiting")).await;
+    let r = row["upsert"][0].clone();
+    assert_eq!(r["parent"], parent);
+    let cpath = Path::new(r["workspace"]["path"].as_str().unwrap()).to_owned();
+    assert_ne!(cpath, ppath);
+    assert_eq!(std::fs::read_to_string(cpath.join("wip.txt")).unwrap(), "uncommitted\n");
+    assert_eq!(r["workspace"]["from"], parent);
+    // The stream carries `parent` on `session.created`, and the first message the envelope.
+    let stream = format!("p/{}/s/{child}", project.as_str().unwrap());
+    c.send(json!({"t": "sub", "id": 9, "filter": {"stream": stream}, "from": 1})).await;
+    c.until(|m| m["t"] == "live" && m["sub"] == 9).await;
+    let evs: Vec<_> = c.seen.iter().filter(|m| m["t"] == "events" && m["sub"] == 9).flat_map(kinds_in).collect();
+    let created = &evs.iter().find(|(k, _)| k == "session.created").unwrap().1;
+    assert_eq!(created["parent"], parent);
+    let first = evs.iter().find(|(k, _)| k == "user.message").unwrap().1["text"].as_str().unwrap().to_owned();
+    assert!(first.contains(&format!("started by Atelier session {}", parent.as_str().unwrap())), "{first}");
+    assert!(first.contains("a snapshot of session") && first.ends_with("try the other way"), "{first}");
+
+    // Share: the parent's own directory, read-only.
+    let (is_err, text) = tool("spawn", json!({"task": "look", "workspace": {"share": "self"}})).await;
+    assert!(!is_err && text.contains("read-only"), "{text}");
+    let shared = text.split_whitespace().nth(1).unwrap().to_owned();
+    let row = c.until(|m| session_row_matches(m, |r| r["id"] == shared && r["status"] == "waiting")).await;
+    assert_eq!(row["upsert"][0]["workspace"]["path"].as_str().unwrap(), ppath.to_str().unwrap());
+    let started = std::fs::read_to_string(git_out_path(&ppath, "--git-dir").join("atelier-fake-args")).unwrap();
+    assert!(started.contains("--disallowedTools Edit,Write,NotebookEdit"), "{started}");
+
+    // `review` is the same, with the review task.
+    let (is_err, text) = tool("spawn", json!({"review": "self"})).await;
+    assert!(!is_err && text.contains("read-only"), "{text}");
+
+    // Bad parameters are refused before anything starts; so is the 5th live child.
+    let (is_err, text) = tool("spawn", json!({"task": "x", "workspace": "elsewhere"})).await;
+    assert!(is_err || text.is_empty());
+    let (is_err, text) = tool("spawn", json!({"task": "fresh one", "workspace": "fresh"})).await;
+    assert!(!is_err, "{text}");
+    let (is_err, text) = tool("spawn", json!({"task": "one too many", "workspace": "fresh"})).await;
+    assert!(is_err && text.contains("4 children") && text.contains("ATELIER_SPAWN_CHILDREN"), "{text}");
     app.supervisor.shutdown().await;
 }

@@ -1437,3 +1437,29 @@
 .swipe-act.armed {
   color: var(--ink);
 }
+
+/* A `spawn` call in the parent's transcript: a link to the child with its live status. */
+.spawn-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--gold);
+  text-decoration: none;
+  font-size: 13px;
+}
+.spawn-card:hover {
+  background: var(--wash);
+}
+.spawn-card .t {
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row .m .prov {
+  color: var(--gold);
+}

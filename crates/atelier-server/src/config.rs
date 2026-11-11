@@ -27,9 +27,26 @@ pub struct Config {
     pub idle_timeout: Duration,
     /// Ask the agent for a title after each session's first turn. `ATELIER_AUTO_TITLE=0` turns it off.
     pub auto_title: bool,
+    /// How far and wide agents may spawn sessions.
+    pub spawn: SpawnLimits,
     /// Shared secret clients present in `hello`. Generated on first run and
     /// stored in `<home>/token`. `None` disables auth (tests only).
     pub token: Option<String>,
+}
+
+/// Limits on agents starting sessions (`spawn`). `ATELIER_SPAWN_DEPTH` / `ATELIER_SPAWN_CHILDREN`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpawnLimits {
+    /// How many levels below a person-started session a spawned session may be.
+    pub max_depth: u32,
+    /// Spawned children of one session that may be running or waiting at once.
+    pub max_live_children: u32,
+}
+
+impl Default for SpawnLimits {
+    fn default() -> Self {
+        Self { max_depth: 3, max_live_children: 4 }
+    }
 }
 
 impl Config {
@@ -66,6 +83,17 @@ impl Config {
             Ok(v) => v.parse().context("ATELIER_IDLE_SECS must be a whole number of seconds")?,
             Err(_) => 600,
         };
+        let number = |name: &str, default: u32| -> Result<u32> {
+            match std::env::var(name) {
+                Ok(v) => v.parse().with_context(|| format!("{name} must be a whole number")),
+                Err(_) => Ok(default),
+            }
+        };
+        let d = SpawnLimits::default();
+        let spawn = SpawnLimits {
+            max_depth: number("ATELIER_SPAWN_DEPTH", d.max_depth)?,
+            max_live_children: number("ATELIER_SPAWN_CHILDREN", d.max_live_children)?,
+        };
         let token = Some(atelier_proto::local::token(&home)?);
         Ok(Self {
             home,
@@ -75,6 +103,7 @@ impl Config {
             claude_bin,
             claude_home,
             auto_title,
+            spawn,
             idle_timeout: Duration::from_secs(idle_secs),
             token,
         })

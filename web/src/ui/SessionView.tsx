@@ -27,6 +27,8 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
   const source = () => (s().workspace.from ? sessions.get(s().workspace.from as string) : undefined);
   const sourceName = () => source()?.title ?? "another session";
   const readers = () => readersOf(sessions.list(), s().id);
+  const spawner = () => (s().parent ? sessions.get(s().parent as string) : undefined);
+  const liveChildren = () => sessions.list().filter((c) => c.parent === s().id && !c.archived);
   const reviewChanges = () => {
     const ws = s().workspace;
     prefillNewSession({
@@ -116,12 +118,17 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
         >
           <button
             class="btn quiet"
+            title={liveChildren().length ? `Archiving doesn't archive the ${liveChildren().length} session(s) it spawned` : undefined}
             onClick={() =>
               act(conn.call("session.archive", { session: s().id })).then((r) => {
                 const kept = (r as Archived | undefined)?.kept;
-                // Stay put when the worktree was kept, so the reason is read before leaving.
-                if (kept) setNote(`Archived. Worktree and branch kept: ${kept}.`);
-                else go({ name: "sessions", project: s().project });
+                const kids = liveChildren().length;
+                // Stay put when there is something to read first: why the worktree was kept, or the live children.
+                if (kept || kids) {
+                  setNote(
+                    `Archived.${kept ? ` Worktree and branch kept: ${kept}.` : ""}${kids ? ` The ${kids} session${kids === 1 ? "" : "s"} it spawned keep${kids === 1 ? "s" : ""} going; archive ${kids === 1 ? "it" : "them"} separately.` : ""}`,
+                  );
+                } else go({ name: "sessions", project: s().project });
               })
             }
           >
@@ -151,6 +158,14 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
           <Show when={s().workspace.branch} fallback={<span>project directory</span>}>
             <span>
               worktree <code>{s().workspace.branch}</code>
+            </span>
+          </Show>
+          <Show when={s().parent}>
+            <span class="prov">
+              spawned by{" "}
+              <a href={href({ name: "sessions", project: s().project, session: s().parent ?? undefined })}>
+                "{spawner()?.title ?? "another session"}"
+              </a>
             </span>
           </Show>
           <Show when={s().workspace.mode === "shared"}>

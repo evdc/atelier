@@ -56,6 +56,20 @@ pub static TOOLS: &[Tool] = &[
         schema: read_schema,
         run: |app, _me, args| Box::pin(async move { read(app, parse(args)?).await }),
     },
+    Tool {
+        name: "spawn",
+        description: "Start a new session (a full, persistent agent of its own, visible to the person) to do a task, \
+            and return its id. Choose its `workspace`: `{\"branch\": \"self\"}` (default) a new worktree at a \
+            snapshot of your working tree, uncommitted changes included, to try something or split off a subtask \
+            without touching yours; `{\"share\": \"self\"}` read-only in your own worktree, to see your live \
+            edits (a reviewer); `\"fresh\"` a new worktree from the project's HEAD; `\"project\"` the project \
+            checkout. A session id in place of `self` uses that session's worktree instead. \
+            `review: \"self\"` is shorthand for a read-only reviewer of your changes. The child runs on its own: \
+            it reports back when it's done and can be asked follow-ups. Limited in depth and in how many children \
+            may be running at once.",
+        schema: spawn_schema,
+        run: |app, me, args| Box::pin(async move { spawn(app, me, parse(args)?).await }),
+    },
 ];
 
 fn parse<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, ToolError> {
@@ -150,6 +164,126 @@ fn ago(now: i64, then: i64) -> String {
 
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+}
+
+// ─── spawn ───────────────────────────────────────────────────────────────────
+
+fn spawn_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "task": { "type": "string", "description": "What the new session should do. It starts knowing nothing else." },
+            "title": { "type": "string", "description": "Default: the start of the task." },
+            "workspace": {
+                "description": "Default {\"branch\": \"self\"}. One of: {\"branch\": \"self\" | <session id>} a new worktree at a snapshot of that session's working tree; {\"share\": \"self\" | <session id>} that session's worktree, read-only; \"fresh\" a new worktree from the project's HEAD; \"project\" the project checkout.",
+            },
+            "review": { "type": "string", "description": "\"self\" or a session id: start a read-only reviewer of that session's changes. `task` then adds what to look at, and is optional." },
+            "model": { "type": "string" },
+        },
+    })
+}
+
+#[derive(Deserialize)]
+struct SpawnArgs {
+    task: Option<String>,
+    title: Option<String>,
+    workspace: Option<Value>,
+    review: Option<String>,
+    model: Option<String>,
+}
+
+async fn spawn(app: &App, me: &SessionId, args: SpawnArgs) -> Result<String, ToolError> {
+    use crate::spawn::{Envelope, Wanted, envelope, parse_workspace, review_prompt};
+    let id = me.clone();
+    let own = app.store.read(move |c| views::sessions::get(c, id.as_str())).await?.context("your session is gone")?;
+    let task = args.task.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    let wanted = match (&args.review, &args.workspace) {
+        (Some(_), Some(_)) => return Err(ToolError::Params("use either `review` or `workspace`, not both".into())),
+        (Some(r), None) if r.is_empty() => return Err(ToolError::Params("`review` is empty".into())),
+        (Some(r), None) => Wanted::Share(if r == "self" { me.clone() } else { r.as_str().into() }),
+        (None, ws) => parse_workspace(ws.as_ref(), me).map_err(ToolError::Params)?,
+    };
+    if task.is_none() && args.review.is_none() {
+        return Err(ToolError::Params("`task` is required".into()));
+    }
+    let (mode, from) = wanted.mode_and_from();
+    let project = crate::rpc::project_row(app, own.project.as_str()).await?;
+    // Resolve the source first, so a bad one is refused before anything is created.
+    let source = match &from {
+        Some(f) => Some(crate::rpc::source_session(app, &project, f).await.map_err(|e| {
+            let hint = if matches!(wanted, Wanted::Branch(_)) && from.as_ref() == Some(me) {
+                " (use workspace \"fresh\" or \"project\" to start elsewhere)"
+            } else {
+                ""
+            };
+            ToolError::Failed(format!("{e:#}{hint}"))
+        })?),
+        None => None,
+    };
+    let src_title = source.as_ref().map(|s| s.title.split_whitespace().collect::<Vec<_>>().join(" "));
+    let can_send = TOOLS.iter().any(|t| t.name == "send");
+    let describe = match (&wanted, &source) {
+        (Wanted::Share(_), Some(s)) => format!(
+            "read-only in session {} (\"{}\")'s worktree{} — don't modify tracked files; build and test output is fine",
+            s.id,
+            src_title.clone().unwrap_or_default(),
+            s.workspace.branch.as_ref().map(|b| format!(", branch `{b}`")).unwrap_or_default(),
+        ),
+        (Wanted::Branch(_), Some(s)) => format!(
+            "a new worktree branched from a snapshot of session {} (\"{}\")'s working tree, uncommitted changes included",
+            s.id,
+            src_title.clone().unwrap_or_default()
+        ),
+        (Wanted::Project, _) => "the project directory, shared with everything else working there".to_owned(),
+        _ => "a new worktree from the project's HEAD".to_owned(),
+    };
+    let task_text = match (&args.review, &source) {
+        (Some(_), Some(s)) => {
+            let base = review_prompt(
+                &s.title,
+                s.workspace.base.as_deref(),
+                s.workspace.branch.as_deref(),
+                can_send.then_some(me),
+            );
+            match task {
+                Some(extra) => format!("{base}\n\n{extra}"),
+                None => base,
+            }
+        }
+        _ => task.unwrap_or_default().to_owned(),
+    };
+    let title = args
+        .title
+        .filter(|t| !t.trim().is_empty())
+        .or_else(|| args.review.as_ref().zip(src_title.as_ref()).map(|(_, t)| format!("Review: {t}")))
+        .unwrap_or_else(|| crate::rpc::title_from(task.unwrap_or_default()));
+    let prompt =
+        envelope(&Envelope { parent: me, parent_title: &own.title, workspace: &describe, can_send }, &task_text);
+    let call = atelier_proto::Call::SessionCreate {
+        project: own.project.clone(),
+        prompt,
+        workspace: mode,
+        title: Some(title.clone()),
+        model: args.model,
+        from,
+        parent: Some(me.clone()),
+    };
+    let result = crate::rpc::handle(app, atelier_core::Actor::Agent(me.clone()), None, call).await?;
+    let child: SessionId = result["id"].as_str().context("session.create returned no id")?.into();
+    let cid = child.clone();
+    let row =
+        app.store.read(move |c| views::sessions::get(c, cid.as_str())).await?.context("the new session is gone")?;
+    let place = match (row.workspace.mode, &row.workspace.branch) {
+        (atelier_core::domain::WorkspaceMode::Direct, _) => "the project directory".to_owned(),
+        (atelier_core::domain::WorkspaceMode::Shared, b) => format!(
+            "{}'s worktree{}, read-only",
+            src_title.unwrap_or_default(),
+            b.as_ref().map(|b| format!(" {b}")).unwrap_or_default()
+        ),
+        (_, Some(b)) => format!("worktree {b}"),
+        (_, None) => "a new worktree".to_owned(),
+    };
+    Ok(format!("started {child} '{title}' in {place}"))
 }
 
 // ─── read ────────────────────────────────────────────────────────────────────
@@ -361,6 +495,7 @@ mod tests {
             updated_at,
             archived: false,
             imported: false,
+            parent: None,
         }
     }
 

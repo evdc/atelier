@@ -3,7 +3,9 @@ import type { SessionRow } from "../gen/SessionRow";
 import type { Item } from "../agents/model";
 import type { LiveTranscript } from "../agents/transcript";
 import { usd } from "../lib/time";
-import { summarize, toolStat } from "../agents/tools";
+import { spawnedId, summarize, toolStat } from "../agents/tools";
+import { href } from "../lib/router";
+import { useApp } from "./context";
 import { ToolBody } from "./tools/ToolBody";
 import { Ask } from "./Ask";
 import { Markdown } from "./Markdown";
@@ -186,7 +188,30 @@ function ItemView(props: {
 
 type ToolItem = Extract<Item, { k: "tool" }>;
 
+/** A `spawn` call, as a link to the session it started, with that session's live status. */
+function SpawnCard(props: { id: string; tool: ToolItem }) {
+  const { sessions } = useApp();
+  const child = () => sessions.get(props.id);
+  return (
+    <a class="spawn-card" href={href({ name: "sessions", project: child()?.project ?? "", session: props.id })}>
+      <i class={`st ${child()?.status ?? "idle"}`} />
+      <span class="t">{child()?.title ?? String((props.tool.input as { title?: string })?.title ?? "spawned session")}</span>
+      <span class="faint">{child()?.status ?? ""}</span>
+    </a>
+  );
+}
+
 function ToolView(props: { tool: ToolItem; cwd: string }) {
+  const tool = () => props.tool;
+  const spawned = () => spawnedId(tool().name, tool().result);
+  return (
+    <Show when={spawned()} fallback={<PlainTool tool={tool()} cwd={props.cwd} />}>
+      {(id) => <SpawnCard id={id()} tool={tool()} />}
+    </Show>
+  );
+}
+
+function PlainTool(props: { tool: ToolItem; cwd: string }) {
   const tool = () => props.tool;
   const [open, setOpen] = createSignal(false);
   return (

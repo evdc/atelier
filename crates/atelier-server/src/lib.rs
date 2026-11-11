@@ -13,6 +13,7 @@ pub mod config;
 pub mod import;
 pub mod mcp;
 pub mod rpc;
+pub mod spawn;
 pub mod supervisor;
 pub mod sync;
 pub mod tailnet;

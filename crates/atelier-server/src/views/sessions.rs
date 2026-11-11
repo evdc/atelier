@@ -29,7 +29,7 @@ impl Projection for Sessions {
         "sessions"
     }
     fn version(&self) -> u32 {
-        4
+        5
     }
     fn migrate(&self, db: &Connection) -> rusqlite::Result<()> {
         db.execute_batch(
@@ -52,7 +52,8 @@ impl Projection for Sessions {
                 archived   INTEGER NOT NULL DEFAULT 0,
                 imported   INTEGER NOT NULL DEFAULT 0,
                 -- Archiving released the worktree; the directory may be pooled for another session.
-                worktree_removed INTEGER NOT NULL DEFAULT 0
+                worktree_removed INTEGER NOT NULL DEFAULT 0,
+                parent     TEXT
              ) STRICT;
              -- One row per imported history file; `offset` is how far into it the log has seen.
              CREATE TABLE IF NOT EXISTS imports (
@@ -112,8 +113,8 @@ impl Projection for Sessions {
             db.execute(
                 "INSERT OR IGNORE INTO sessions
                    (id, project, stream, title, agent, workspace, model, native_id, imported, status,
-                    created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?9, ?10, 'idle', ?8, ?8)",
+                    created_at, updated_at, parent)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?9, ?10, 'idle', ?8, ?8, ?11)",
                 params![
                     id,
                     project.as_str(),
@@ -124,7 +125,8 @@ impl Projection for Sessions {
                     s.model,
                     at,
                     native_id,
-                    imported
+                    imported,
+                    s.parent.as_ref().map(|p| p.as_str())
                 ],
             )?;
         } else {
@@ -199,7 +201,7 @@ impl Projection for Sessions {
 }
 
 const SELECT: &str = "SELECT id, project, stream, title, agent, workspace, model, status, alive, pending,
-                             turns, cost_usd, created_at, updated_at, archived, imported
+                             turns, cost_usd, created_at, updated_at, archived, imported, parent
                       FROM sessions";
 
 pub fn list(c: &Connection, project: Option<&str>) -> Result<Vec<SessionRow>> {
@@ -262,6 +264,7 @@ fn row(r: &Row) -> rusqlite::Result<SessionRow> {
         updated_at: r.get(13)?,
         archived: r.get(14)?,
         imported: r.get(15)?,
+        parent: r.get::<_, Option<String>>(16)?.map(|p| p.as_str().into()),
     })
 }
 

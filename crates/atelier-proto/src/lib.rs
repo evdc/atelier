@@ -107,6 +107,10 @@ pub enum Call {
         #[serde(default)]
         #[ts(optional)]
         from: Option<SessionId>,
+        /// The session starting this one (an agent's `spawn`). Subject to the spawn limits.
+        #[serde(default)]
+        #[ts(optional)]
+        parent: Option<SessionId>,
     },
     /// Send a message; starts (or resumes) the agent process if needed.
     #[serde(rename = "session.send")]
@@ -422,6 +426,8 @@ pub struct SessionRow {
     pub archived: bool,
     /// Read from the agent's own history rather than started here.
     pub imported: bool,
+    /// The session that spawned this one.
+    pub parent: Option<SessionId>,
 }
 
 /// Subscription usage, from the latest `cc.rate_limit_event` per window across

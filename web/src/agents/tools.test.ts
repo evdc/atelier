@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffCounts, diffLines, exitCode, highlightLine, tail, toolStat } from "./tools";
+import { diffCounts, diffLines, exitCode, highlightLine, spawnedId, tail, toolStat } from "./tools";
 
 const show = (a: string, b: string) => diffLines(a, b).map((l) => l.op + l.text);
 
@@ -49,4 +49,15 @@ it("highlightLine", () => {
     ["com", "// note"],
   ]);
   expect(t.map((k) => k.text).join("")).toBe('const x = foo("hi"); // note');
+});
+
+describe("spawnedId", () => {
+  const ok = { text: "started 01a1-b2 'Write it' in worktree atelier/x", error: false };
+  it("reads the child's id from a spawn result", () => expect(spawnedId("mcp__atelier__spawn", ok)).toBe("01a1-b2"));
+  it("ignores other tools, pending calls and refusals", () => {
+    expect(spawnedId("Bash", ok)).toBeNull();
+    expect(spawnedId("mcp__atelier__spawn", undefined)).toBeNull();
+    expect(spawnedId("mcp__atelier__spawn", { text: "spawn refused: …", error: true })).toBeNull();
+    expect(spawnedId("mcp__atelier__spawn", { text: "spawn refused: …", error: false })).toBeNull();
+  });
 });

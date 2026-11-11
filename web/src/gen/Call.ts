@@ -12,7 +12,11 @@ export type Call = { "method": "project.add", "params": { path: string, name?: s
  * The session whose worktree this one shares (`workspace: shared`) or branches from
  * (`workspace: worktree`). Required for `shared`; refused for `direct`.
  */
-from?: SessionId, } } | { "method": "session.send", "params": { session: SessionId, text: string, } } | { "method": "session.interrupt", "params": { session: SessionId, } } | { "method": "session.answer", "params": { session: SessionId, request_id: string, decision: PermissionDecision, } } | { "method": "session.rename", "params": { session: SessionId, title: string, } } | { "method": "session.stop", "params": { session: SessionId, } } | { "method": "session.archive", "params": { session: SessionId, } } | { "method": "session.unarchive", "params": { session: SessionId, } } | { "method": "session.changes", "params": { session: SessionId, } } | { "method": "session.merge", "params": { session: SessionId, } } | { "method": "session.diff", "params": { session: SessionId, path: string, } } | { "method": "project.import", "params": { project: ProjectId, } } | { "method": "fs.list", "params": { path?: string, 
+from?: SessionId, 
+/**
+ * The session starting this one (an agent's `spawn`). Subject to the spawn limits.
+ */
+parent?: SessionId, } } | { "method": "session.send", "params": { session: SessionId, text: string, } } | { "method": "session.interrupt", "params": { session: SessionId, } } | { "method": "session.answer", "params": { session: SessionId, request_id: string, decision: PermissionDecision, } } | { "method": "session.rename", "params": { session: SessionId, title: string, } } | { "method": "session.stop", "params": { session: SessionId, } } | { "method": "session.archive", "params": { session: SessionId, } } | { "method": "session.unarchive", "params": { session: SessionId, } } | { "method": "session.changes", "params": { session: SessionId, } } | { "method": "session.merge", "params": { session: SessionId, } } | { "method": "session.diff", "params": { session: SessionId, path: string, } } | { "method": "project.import", "params": { project: ProjectId, } } | { "method": "fs.list", "params": { path?: string, 
 /**
  * Include dot-directories.
  */

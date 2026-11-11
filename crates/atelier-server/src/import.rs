@@ -120,6 +120,7 @@ async fn import_file(app: &App, p: &ProjectRow, cwds: &[PathBuf], file: &Path) -
                 model: None,
                 origin: Some(Origin::Imported { native_id, path: path_s.clone() }),
                 started_at: scan.messages.first().and_then(|m| m.at),
+                parent: None,
             };
             let s_stream = stream::session(&p.id, &id);
             (id, vec![NewEvent::new(&s_stream, Actor::Atelier, &created)], true)

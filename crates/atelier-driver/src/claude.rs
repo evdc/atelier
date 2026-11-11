@@ -32,7 +32,7 @@ pub const NS: &str = "cc";
 /// The MCP server name; tools show up as `mcp__atelier__<tool>`.
 pub const ATELIER_SERVER: &str = "atelier";
 /// Atelier tools an agent may call without asking. Add a row when the server gains a (safe) tool.
-const ATELIER_TOOL_NAMES: &[&str] = &["sessions", "read"];
+const ATELIER_TOOL_NAMES: &[&str] = &["sessions", "read", "send"];
 
 fn atelier_tools() -> String {
     ATELIER_TOOL_NAMES.iter().map(|t| format!("mcp__{ATELIER_SERVER}__{t}")).collect::<Vec<_>>().join(",")

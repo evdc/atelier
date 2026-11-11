@@ -57,6 +57,17 @@ pub static TOOLS: &[Tool] = &[
         run: |app, _me, args| Box::pin(async move { read(app, parse(args)?).await }),
     },
     Tool {
+        name: "send",
+        description: "Tell another session something. It arrives as a new turn in that session, waking it if \
+            it is idle; if it is busy, it sees the message after its current turn (it is never interrupted). \
+            Asynchronous: you get no reply here. If it answers, its reply arrives to you the same way, as a \
+            message. `to` is a session id or a unique prefix of at least 4 characters. `refs` are event numbers \
+            (#n from `read`) in your own session that the text points at. Messages are for things the other \
+            session needs to act on or know; the person can see both transcripts.",
+        schema: send_schema,
+        run: |app, me, args| Box::pin(async move { send(app, me, parse(args)?).await }),
+    },
+    Tool {
         name: "spawn",
         description: "Start a new session (a full, persistent agent of its own, visible to the person) to do a task, \
             and return its id. Choose its `workspace`: `{\"branch\": \"self\"}` (default) a new worktree at a \
@@ -164,6 +175,54 @@ fn ago(now: i64, then: i64) -> String {
 
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+}
+
+// ─── send ────────────────────────────────────────────────────────────────────
+
+fn send_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "to": { "type": "string", "description": "Session id, or a unique prefix of at least 4 characters." },
+            "text": { "type": "string", "description": "What to tell it. Self-contained: it hasn't seen your conversation." },
+            "refs": { "type": "array", "items": { "type": "integer" }, "description": "Event numbers in your own session the text refers to." },
+        },
+        "required": ["to", "text"],
+    })
+}
+
+#[derive(Deserialize)]
+struct SendArgs {
+    to: String,
+    text: String,
+    #[serde(default)]
+    refs: Vec<Seq>,
+}
+
+async fn send(app: &App, me: &SessionId, args: SendArgs) -> Result<String, ToolError> {
+    use atelier_proto::SessionStatus::{Running, Waiting};
+    let rows = app.store.read(|c| views::sessions::list(c, None)).await?;
+    let target = crate::message::resolve(&rows, &args.to).map_err(ToolError::Failed)?;
+    if target.archived {
+        return Err(ToolError::Failed(format!("session {} is archived and can't receive messages", target.id)));
+    }
+    // The call that made this one is the latest thing the sender said: the agent is blocked on us.
+    let stream = rows.iter().find(|r| &r.id == me).map(|r| r.stream.clone()).context("your session is gone")?;
+    let cause = app
+        .store
+        .read(move |c| {
+            Ok(c.query_row(
+                "SELECT MAX(seq) FROM events WHERE stream = ?1 AND kind = 'cc.assistant'",
+                [&stream],
+                |r| r.get::<_, Option<Seq>>(0),
+            )?)
+        })
+        .await?;
+    let busy = matches!(target.status, Running | Waiting);
+    let call = atelier_proto::Call::SessionSend { session: target.id.clone(), text: args.text, refs: args.refs };
+    crate::rpc::handle(app, atelier_core::Actor::Agent(me.clone()), cause, call).await?;
+    let state = if busy { "running — it will see this after its current turn" } else { "idle — woke it" };
+    Ok(format!("delivered to {} ({state})", target.id))
 }
 
 // ─── spawn ───────────────────────────────────────────────────────────────────
@@ -370,7 +429,7 @@ impl Page {
     }
 }
 
-const CONVERSATION: &str = "kind IN ('user.message', 'cc.assistant')";
+const CONVERSATION: &str = "kind IN ('user.message', 'agent.message', 'cc.assistant')";
 
 /// Up to `budget` chars of one side of `pivot`, cut at line boundaries (the first line is cut to fit if it
 /// alone is too long). Reads rows lazily, so cost follows the budget, not the session's length.

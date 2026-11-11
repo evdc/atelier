@@ -183,7 +183,7 @@ fn mcp_config_carries_url_token_and_allowed_tools() {
     assert_eq!(server["type"], "http");
     assert_eq!(server["url"], "http://127.0.0.1:1/mcp");
     assert_eq!(server["headers"]["Authorization"], "Bearer tok");
-    assert_eq!(after(&args, "--allowedTools"), Some("mcp__atelier__sessions,mcp__atelier__read"));
+    assert_eq!(after(&args, "--allowedTools"), Some("mcp__atelier__sessions,mcp__atelier__read,mcp__atelier__send"));
     assert_eq!(after(&args, "--append-system-prompt"), Some("You are s1."));
 }
 

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::{EventBody, ProjectId, SessionId};
+use crate::{EventBody, ProjectId, Seq, SessionId};
 
 macro_rules! kind {
     ($t:ty, $k:literal) => {
@@ -175,6 +175,37 @@ pub struct UserMessage {
     pub text: String,
 }
 kind!(UserMessage, "user.message");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum MessageMode {
+    /// Fire and forget: the target may reply with its own `send`.
+    Tell,
+    /// The sender is waiting for the target's answer (`ask`).
+    Ask,
+}
+
+/// A message from another session, in the *target's* stream. The sender's side is already in its own
+/// transcript as the tool call. Starts a turn, like `user.message`, but is not the person and not a reason
+/// to notify them. `actor` is `agent:<from>`; `cause` is the sender's `cc.assistant` event that made the call.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AgentMessage {
+    pub from: SessionId,
+    /// What the sender wrote, without the envelope the target sees.
+    pub text: String,
+    pub mode: MessageMode,
+    /// One more than the hops of the input that started the sender's turn; a person's message counts as 0.
+    pub hops: u32,
+    /// Events in the sender's stream the text points at.
+    #[serde(default)]
+    #[ts(type = "Array<number>")]
+    pub refs: Vec<Seq>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask_id: Option<String>,
+}
+kind!(AgentMessage, "agent.message");
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]

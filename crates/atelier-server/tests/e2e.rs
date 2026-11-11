@@ -928,7 +928,7 @@ async fn agents_see_other_sessions_through_the_mcp_server() {
         rows.into_iter().find(|r| r.id.as_str() == ws["id"].as_str().unwrap()).unwrap().workspace.path
     };
     let args = std::fs::read_to_string(git_out_path(Path::new(&wpath), "--git-dir").join("atelier-fake-args")).unwrap();
-    assert!(args.contains("--allowedTools mcp__atelier__sessions,mcp__atelier__read"), "{args}");
+    assert!(args.contains("--allowedTools mcp__atelier__sessions,mcp__atelier__read,mcp__atelier__send"), "{args}");
     assert!(args.contains(&format!("--append-system-prompt You are Atelier session {}", ws["id"].as_str().unwrap())));
     let token = args.split("Bearer ").nth(1).unwrap().split('"').next().unwrap().to_owned();
 
@@ -1061,5 +1061,221 @@ async fn agents_spawn_child_sessions() {
     assert!(!is_err, "{text}");
     let (is_err, text) = tool("spawn", json!({"task": "one too many", "workspace": "fresh"})).await;
     assert!(is_err && text.contains("4 children") && text.contains("ATELIER_SPAWN_CHILDREN"), "{text}");
+    app.supervisor.shutdown().await;
+}
+
+/// A tool call as the agent in `session` would make it: with that session's current MCP token.
+async fn call_tool_as(app: &App, addr: SocketAddr, session: &str, name: &str, args: Value) -> (bool, String) {
+    let row = app
+        .store
+        .read({
+            let s = session.to_owned();
+            move |c| atelier_server::views::sessions::get(c, &s)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    let dir = git_out_path(Path::new(&row.workspace.path), "--git-dir");
+    let started = std::fs::read_to_string(dir.join("atelier-fake-args")).unwrap();
+    let token = started.split("Bearer ").nth(1).unwrap().split('"').next().unwrap().to_owned();
+    let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}});
+    let (status, body) = http(addr, "POST", "/mcp", Some(&token), &body.to_string()).await;
+    assert_eq!(status, 200, "{body}");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    (v["result"]["isError"] == true, v["result"]["content"][0]["text"].as_str().unwrap_or_default().to_owned())
+}
+
+/// Events of one session's stream, once `pred` holds for them (the log is written by other tasks).
+async fn events_where(
+    app: &App,
+    stream: &str,
+    pred: impl Fn(&[std::sync::Arc<atelier_core::Event>]) -> bool,
+) -> Vec<std::sync::Arc<atelier_core::Event>> {
+    for _ in 0..200 {
+        let evs =
+            app.store.events(atelier_core::stream::StreamFilter::Stream(stream.to_owned()), 1, 10_000).await.unwrap();
+        if pred(&evs) {
+            return evs;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting on {stream}");
+}
+
+fn agent_messages(evs: &[std::sync::Arc<atelier_core::Event>]) -> Vec<&atelier_core::Event> {
+    evs.iter().map(|e| &**e).filter(|e| e.kind == "agent.message").collect()
+}
+
+async fn repo_with_commit(tmp: &Path) -> PathBuf {
+    let repo = tmp.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"]);
+    repo
+}
+
+#[tokio::test]
+async fn sessions_message_each_other() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo_with_commit(tmp.path()).await;
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let (project, a, a_stream) = session_in_project(&mut c, &repo, "I am A").await;
+    let a = a.as_str().unwrap().to_owned();
+    let b = c.rpc("session.create", json!({"project": project, "prompt": "I am B"})).await;
+    let (b_id, b_stream) = (b["id"].as_str().unwrap().to_owned(), b["stream"].as_str().unwrap().to_owned());
+    c.until(|m| session_row_matches(m, |r| r["id"] == b_id.as_str() && r["status"] == "waiting")).await;
+    // B is idle, with no process: a message has to wake it.
+    c.rpc("session.stop", json!({"session": b_id})).await;
+    c.until(|m| session_row_matches(m, |r| r["id"] == b_id.as_str() && r["status"] == "idle" && r["alive"] == false))
+        .await;
+
+    // A tells B, by id prefix. The text makes B's fake agent answer with a `send` of its own.
+    let reply = format!(r#"MCP:send:{{"to":"{}","text":"pong"}}"#, a);
+    // Ids made together share their first characters (they start with a timestamp): a prefix has to go past them.
+    let (is_err, text) = call_tool_as(&app, addr, &a, "send", json!({"to": &b_id[..14], "text": reply})).await;
+    assert!(!is_err, "{text}");
+    assert_eq!(text, format!("delivered to {b_id} (idle — woke it)"));
+
+    // B's stream: an agent.message authored by A, caused by A's latest assistant event, then a turn.
+    let evs =
+        events_where(&app, &b_stream, |e| !agent_messages(e).is_empty() && e.iter().any(|x| x.kind == "turn.ended"))
+            .await;
+    let msg = agent_messages(&evs)[0];
+    assert_eq!(msg.actor, format!("agent:{a}"));
+    let a_events = events_where(&app, &a_stream, |_| true).await;
+    let last_assistant = a_events.iter().filter(|e| e.kind == "cc.assistant").map(|e| e.seq).max();
+    assert!(last_assistant.is_some());
+    assert_eq!(msg.cause, last_assistant);
+    let body: Value = serde_json::from_str(msg.body.get()).unwrap();
+    assert_eq!(
+        (body["from"].as_str(), body["mode"].as_str(), body["hops"].as_u64()),
+        (Some(a.as_str()), Some("tell"), Some(1))
+    );
+    assert!(
+        body["text"].as_str().unwrap().starts_with("MCP:send:"),
+        "the log keeps the sender's words, not the envelope"
+    );
+
+    // The agent was handed the envelope.
+    let started = events_where(&app, &b_stream, |e| e.iter().any(|x| x.kind == "cc.user")).await;
+    assert!(started.iter().any(|e| e.kind == "process.started"));
+
+    // B's reply reaches A as an agent.message from B, one hop further.
+    let evs = events_where(&app, &a_stream, |e| !agent_messages(e).is_empty()).await;
+    let back = agent_messages(&evs)[0];
+    assert_eq!(back.actor, format!("agent:{b_id}"));
+    let body: Value = serde_json::from_str(back.body.get()).unwrap();
+    assert_eq!((body["text"].as_str(), body["hops"].as_u64()), (Some("pong"), Some(2)));
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn send_refusals() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo_with_commit(tmp.path()).await;
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let (project, a, _) = session_in_project(&mut c, &repo, "A").await;
+    let a = a.as_str().unwrap().to_owned();
+    let b =
+        c.rpc("session.create", json!({"project": project, "prompt": "B"})).await["id"].as_str().unwrap().to_owned();
+    c.until(|m| session_row_matches(m, |r| r["id"] == b.as_str() && r["status"] == "waiting")).await;
+    let refused = |(is_err, text): (bool, String)| {
+        assert!(is_err, "{text}");
+        text
+    };
+
+    let t = refused(call_tool_as(&app, addr, &a, "send", json!({"to": &a, "text": "hi"})).await);
+    assert!(t.contains("yourself"), "{t}");
+    let t = refused(call_tool_as(&app, addr, &a, "send", json!({"to": &b, "text": "  "})).await);
+    assert!(t.contains("empty"), "{t}");
+    let t = refused(call_tool_as(&app, addr, &a, "send", json!({"to": &b, "text": "x".repeat(16 * 1024 + 1)})).await);
+    assert!(t.contains("limit"), "{t}");
+    let t = refused(call_tool_as(&app, addr, &a, "send", json!({"to": "01", "text": "hi"})).await);
+    assert!(t.contains("too short"), "{t}");
+    // Session ids made at the same moment share a long prefix: it names both.
+    let common = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
+    if common >= 4 {
+        let t = refused(call_tool_as(&app, addr, &a, "send", json!({"to": &a[..common], "text": "hi"})).await);
+        assert!(t.contains("matches 2 sessions") && t.contains(&a) && t.contains(&b), "{t}");
+    }
+    c.rpc("session.archive", json!({"session": b})).await;
+    c.until(|m| session_row_matches(m, |r| r["id"] == b.as_str() && r["archived"] == true)).await;
+    let t = refused(call_tool_as(&app, addr, &a, "send", json!({"to": &b, "text": "hi"})).await);
+    assert!(t.contains("archived"), "{t}");
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn hops_stop_ping_pong_and_a_person_resets_them() {
+    use atelier_core::{Actor, SessionId};
+    use atelier_proto::Call;
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo_with_commit(tmp.path()).await;
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let (project, a, a_stream) = session_in_project(&mut c, &repo, "A").await;
+    let a = a.as_str().unwrap().to_owned();
+    let b =
+        c.rpc("session.create", json!({"project": project, "prompt": "B"})).await["id"].as_str().unwrap().to_owned();
+    c.until(|m| session_row_matches(m, |r| r["id"] == b.as_str() && r["status"] == "waiting")).await;
+
+    let send = |from: &str, to: &str| {
+        let call = Call::SessionSend { session: SessionId::from(to), text: "again".into(), refs: vec![] };
+        let (app, from) = (app.clone(), SessionId::from(from));
+        async move { atelier_server::rpc::handle(&app, Actor::Agent(from), None, call).await }
+    };
+    // Each message counts from the one the sender last received: 1, 2, … 6 go through, the 7th doesn't.
+    for hop in 1..=6 {
+        let (from, to) = if hop % 2 == 1 { (&a, &b) } else { (&b, &a) };
+        send(from, to).await.unwrap_or_else(|e| panic!("hop {hop}: {e:#}"));
+    }
+    let err = send(&a, &b).await.unwrap_err();
+    assert!(format!("{err}").contains("hop limit reached"), "{err}");
+
+    // The person speaks to A: its next message is hop 1 again.
+    c.rpc("session.send", json!({"session": a, "text": "carry on"})).await;
+    events_where(&app, &a_stream, |e| e.iter().any(|x| x.kind == "user.message" && x.actor == "user")).await;
+    send(&a, &b).await.unwrap();
+    let b_stream = format!("p/{}/s/{b}", project.as_str().unwrap());
+    let evs = events_where(&app, &b_stream, |e| agent_messages(e).len() == 4).await;
+    let hops: Vec<u64> = agent_messages(&evs)
+        .iter()
+        .map(|e| serde_json::from_str::<Value>(e.body.get()).unwrap()["hops"].as_u64().unwrap())
+        .collect();
+    assert_eq!(hops, [1, 3, 5, 1]);
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_message_to_a_busy_session_waits_for_its_turn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo_with_commit(tmp.path()).await;
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let (project, a, _) = session_in_project(&mut c, &repo, "A").await;
+    let a = a.as_str().unwrap().to_owned();
+    // B is mid-turn: its fake agent is waiting for a permission answer.
+    let b = c.rpc("session.create", json!({"project": project, "prompt": "B"})).await;
+    let (b_id, b_stream) = (b["id"].as_str().unwrap().to_owned(), b["stream"].as_str().unwrap().to_owned());
+    c.until(|m| session_row_matches(m, |r| r["id"] == b_id.as_str() && r["status"] == "waiting")).await;
+
+    let (is_err, text) = call_tool_as(&app, addr, &a, "send", json!({"to": &b_id, "text": "when you can"})).await;
+    assert!(!is_err, "{text}");
+    assert_eq!(text, format!("delivered to {b_id} (running — it will see this after its current turn)"));
+    // Logged at once, but held back: B hasn't started another turn, so it has said "hi" once.
+    let evs = events_where(&app, &b_stream, |e| !agent_messages(e).is_empty()).await;
+    assert_eq!(evs.iter().filter(|e| e.kind == "cc.assistant").count(), 1);
+    assert!(!evs.iter().any(|e| e.kind == "turn.ended"));
+    // The person's answer ends the turn; then the queued message runs as the next one.
+    c.rpc("session.answer", json!({"session": b_id, "request_id": "r1", "decision": {"behavior": "allow"}})).await;
+    let evs = events_where(&app, &b_stream, |e| e.iter().filter(|x| x.kind == "cc.assistant").count() == 2).await;
+    let kinds: Vec<_> = evs
+        .iter()
+        .map(|e| e.kind.as_str())
+        .filter(|k| ["agent.message", "turn.ended", "cc.assistant"].contains(k))
+        .collect();
+    assert_eq!(kinds, ["cc.assistant", "agent.message", "turn.ended", "cc.assistant"]);
     app.supervisor.shutdown().await;
 }

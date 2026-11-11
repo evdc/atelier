@@ -29,7 +29,7 @@ impl Projection for Sessions {
         "sessions"
     }
     fn version(&self) -> u32 {
-        5
+        6
     }
     fn migrate(&self, db: &Connection) -> rusqlite::Result<()> {
         db.execute_batch(
@@ -53,7 +53,9 @@ impl Projection for Sessions {
                 imported   INTEGER NOT NULL DEFAULT 0,
                 -- Archiving released the worktree; the directory may be pooled for another session.
                 worktree_removed INTEGER NOT NULL DEFAULT 0,
-                parent     TEXT
+                parent     TEXT,
+                -- Hops of the latest input (0 for a person's message): what a `send` from this session counts from.
+                last_input_hops INTEGER NOT NULL DEFAULT 0
              ) STRICT;
              -- One row per imported history file; `offset` is how far into it the log has seen.
              CREATE TABLE IF NOT EXISTS imports (
@@ -151,7 +153,11 @@ impl Projection for Sessions {
             use SessionStatus::*;
 
             if parse::<UserMessage>(ev).is_some() {
-                set("status = ?1", &[&Running.as_str()])?;
+                set("status = ?1, last_input_hops = 0", &[&Running.as_str()])?;
+            } else if let Some(m) = parse::<AgentMessage>(ev) {
+                // It queues behind a turn in progress, so it can't clear a pending request.
+                let next = if pending > 0 { Waiting } else { Running };
+                set("status = ?1, last_input_hops = ?2", &[&next.as_str(), &m.hops])?;
             } else if let Some(t) = parse::<TurnEnded>(ev) {
                 let next = if pending > 0 {
                     Waiting
@@ -235,6 +241,11 @@ pub fn native_id(c: &Connection, id: &str) -> Result<Option<String>> {
     Ok(c.query_row("SELECT native_id FROM sessions WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
 }
 
+/// Hops of the input that started the session's latest turn.
+pub fn last_input_hops(c: &Connection, id: &str) -> Result<u32> {
+    Ok(c.query_row("SELECT last_input_hops FROM sessions WHERE id = ?1", [id], |r| r.get(0)).optional()?.unwrap_or(0))
+}
+
 /// Sessions the log says have a live process (used for recovery on startup).
 pub fn alive(c: &Connection) -> Result<Vec<SessionRow>> {
     let mut q = c.prepare_cached(&format!("{SELECT} WHERE alive = 1"))?;
@@ -279,4 +290,60 @@ pub fn import_offset(c: &Connection, path: &str) -> Result<Option<(String, u64)>
 /// Whether a session already has this agent session id (started here, or imported).
 pub fn has_native_id(c: &Connection, native_id: &str) -> Result<bool> {
     Ok(c.query_row("SELECT 1 FROM sessions WHERE native_id = ?1", [native_id], |_| Ok(())).optional()?.is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use atelier_core::{Actor, NewEvent};
+    use atelier_store::Store;
+
+    #[tokio::test]
+    async fn last_input_hops_follows_the_latest_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("db"), super::super::projections()).unwrap();
+        let stream = "p/p1/s/s1";
+        let created = SessionCreated {
+            id: "s1".into(),
+            project: "p1".into(),
+            title: "t".into(),
+            agent: AgentKind::ClaudeCode,
+            workspace: Workspace {
+                mode: WorkspaceMode::Direct,
+                path: "/w".into(),
+                branch: None,
+                base: None,
+                from: None,
+                snapshot: None,
+            },
+            model: None,
+            origin: None,
+            started_at: None,
+            parent: None,
+        };
+        store.append_one(NewEvent::new(stream, Actor::Atelier, &created)).await.unwrap();
+        let hops = || store.read(|c| last_input_hops(c, "s1"));
+        assert_eq!(hops().await.unwrap(), 0);
+
+        let msg = |hops| AgentMessage {
+            from: "s2".into(),
+            text: "hi".into(),
+            mode: MessageMode::Tell,
+            hops,
+            refs: vec![],
+            ask_id: None,
+        };
+        store.append_one(NewEvent::new(stream, Actor::Agent("s2".into()), &msg(3))).await.unwrap();
+        assert_eq!(hops().await.unwrap(), 3);
+        let row = store.read(|c| get(c, "s1")).await.unwrap().unwrap();
+        assert_eq!(row.status, SessionStatus::Running);
+
+        // A person's word resets it; the agent's own events don't touch it.
+        store.append_one(NewEvent::new(stream, Actor::User, &UserMessage { text: "ok".into() })).await.unwrap();
+        assert_eq!(hops().await.unwrap(), 0);
+        store.append_one(NewEvent::new(stream, Actor::Agent("s2".into()), &msg(5))).await.unwrap();
+        let turn = TurnEnded { is_error: false, cost_usd: None, duration_ms: None, raw: serde_json::Value::Null };
+        store.append_one(NewEvent::new(stream, Actor::Agent("s1".into()), &turn)).await.unwrap();
+        assert_eq!(hops().await.unwrap(), 5);
+    }
 }

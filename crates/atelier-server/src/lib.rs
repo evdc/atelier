@@ -12,6 +12,7 @@ pub mod browse;
 pub mod config;
 pub mod import;
 pub mod mcp;
+pub mod message;
 pub mod rpc;
 pub mod spawn;
 pub mod supervisor;

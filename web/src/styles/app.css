@@ -1463,3 +1463,34 @@
 .row .m .prov {
   color: var(--gold);
 }
+
+/* A message from another session: the agent's gold rule, a heading naming the sender. */
+.agent-msg {
+  border-left: 2px solid var(--gold);
+  padding-left: 12px;
+}
+.agent-msg .from {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin-bottom: 2px;
+}
+.agent-msg .from a,
+.send-line a {
+  color: inherit;
+  text-decoration-color: var(--line);
+}
+.agent-msg .refs {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+.send-line {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.send-line .arrow {
+  color: var(--gold);
+}

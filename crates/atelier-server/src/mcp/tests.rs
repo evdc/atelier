@@ -93,7 +93,7 @@ async fn tools_list_describes_every_tool() {
     let (app, _t) = app().await;
     let r = handle(&app, &SessionId::generate(), call(1, "tools/list", Value::Null)).await.unwrap();
     let names: Vec<_> = r["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["sessions", "read", "spawn"]);
+    assert_eq!(names, ["sessions", "read", "send", "spawn"]);
     for t in r["result"]["tools"].as_array().unwrap() {
         assert_eq!(t["inputSchema"]["type"], "object");
         assert!(!t["description"].as_str().unwrap().is_empty());

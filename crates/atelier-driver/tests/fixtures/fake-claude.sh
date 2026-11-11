@@ -30,6 +30,8 @@ while IFS= read -r line; do
         *MCP:*)
           # The string ends at the first quote that isn't escaped (the driver may order keys any way).
           spec=$(printf '%s' "${line#*MCP:}" | sed 's/\([^\\]\)".*/\1/')
+          # An envelope puts more lines after the call; a JSON `\n` ends it.
+          spec=$(printf '%s' "$spec" | sed 's/\\n.*//')
           tool=${spec%%:*}
           args=$(printf '%s' "${spec#*:}" | sed 's/\\"/"/g')
           url=$(printf '%s' "$mcp_config" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')

@@ -31,8 +31,9 @@ const INVALID_PARAMS: i64 = -32602;
 /// What agents are told about themselves. Short on purpose: it rides along on every turn.
 const SYSTEM_PROMPT: &str = "You are Atelier session {id} (\"{title}\"). Other sessions on this machine, in this \
     and other projects, may already know what you need: before re-deriving something, look for one that does \
-    (`sessions` lists them, `read` shows what was said in one) rather than starting from scratch. These tools come \
-    from the `atelier` MCP server.";
+    (`sessions` lists them, `read` shows what was said in one) rather than starting from scratch. `send` tells one \
+    something; its reply comes back to you as a message, not as a tool result. These tools come from the \
+    `atelier` MCP server.";
 const MAX_PROMPT_TITLE_CHARS: usize = 80;
 
 pub fn system_prompt(id: &SessionId, title: &str) -> String {

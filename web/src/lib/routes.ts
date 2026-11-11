@@ -13,16 +13,22 @@ export type Route =
   | { name: "waiting" }
   | { name: "all" }
   | { name: "new" }
-  | { name: "sessions"; project: string; session?: string; creating?: boolean };
+  | { name: "sessions"; project: string; session?: string; creating?: boolean; at?: number };
 
 /** The phone's bottom bar. */
 export type Tab = "waiting" | "projects" | "all";
 
 export function parse(hash: string): Route {
-  const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  const [path = "", query] = hash.split("?", 2);
+  const at = Number(new URLSearchParams(query ?? "").get("at"));
+  const parts = path.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   if (parts[0] === "p" && parts[1]) {
     const project = parts[1];
-    if (parts[2] === "s" && parts[3]) return { name: "sessions", project, session: parts[3] };
+    if (parts[2] === "s" && parts[3]) {
+      return Number.isInteger(at) && at > 0
+        ? { name: "sessions", project, session: parts[3], at }
+        : { name: "sessions", project, session: parts[3] };
+    }
     if (parts[2] === "new") return { name: "sessions", project, creating: true };
     return { name: "sessions", project };
   }
@@ -38,7 +44,7 @@ export function href(r: Route): string {
   if (r.name === "all") return "#/sessions";
   if (r.name === "new") return "#/new";
   const p = `#/p/${encodeURIComponent(r.project)}`;
-  if (r.session) return `${p}/s/${encodeURIComponent(r.session)}`;
+  if (r.session) return `${p}/s/${encodeURIComponent(r.session)}${r.at ? `?at=${r.at}` : ""}`;
   if (r.creating) return `${p}/new`;
   return p;
 }

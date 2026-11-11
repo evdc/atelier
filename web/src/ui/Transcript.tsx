@@ -3,7 +3,7 @@ import type { SessionRow } from "../gen/SessionRow";
 import type { Item } from "../agents/model";
 import type { LiveTranscript } from "../agents/transcript";
 import { usd } from "../lib/time";
-import { spawnedId, summarize, toolStat } from "../agents/tools";
+import { sendSummary, spawnedId, summarize, toolStat } from "../agents/tools";
 import { href } from "../lib/router";
 import { useApp } from "./context";
 import { ToolBody } from "./tools/ToolBody";
@@ -15,7 +15,7 @@ import { Markdown } from "./Markdown";
 // per-kind estimate. Spacers stand in for everything outside the window.
 const GAP = 12; // matches .tx gap; folded into every cached height
 const OVERSCAN = 600;
-const EST: Record<Item["k"], number> = { user: 56, text: 110, thinking: 24, tool: 26, permission: 70, turn: 20, note: 24 };
+const EST: Record<Item["k"], number> = { user: 56, message: 90, text: 110, thinking: 24, tool: 26, permission: 70, turn: 20, note: 24 };
 
 interface Win {
   s: number;
@@ -152,6 +152,7 @@ function ItemView(props: {
           </div>
         )}
       </Match>
+      <Match when={it.k === "message" && it}>{(m) => <AgentMessageCard item={m()} />}</Match>
       <Match when={it.k === "text" && it}>
         {(m) => (
           <div class="msg" classList={{ sub: !!m().sub, cont: props.prev?.k === "text" }}>
@@ -188,6 +189,45 @@ function ItemView(props: {
 
 type ToolItem = Extract<Item, { k: "tool" }>;
 
+/** A message from another session: gold rule, the sender (linked, title live), their words as markdown. */
+function AgentMessageCard(props: { item: Extract<Item, { k: "message" }> }) {
+  const { sessions } = useApp();
+  const from = () => sessions.get(props.item.from);
+  const to = (at?: number) =>
+    from() ? href({ name: "sessions", project: from()!.project, session: props.item.from, at }) : undefined;
+  return (
+    <div class="msg agent-msg">
+      <div class="from">
+        from{" "}
+        <a href={to()} classList={{ dead: !from() }}>
+          "{from()?.title ?? props.item.from.slice(0, 8)}"
+        </a>
+      </div>
+      <Markdown text={props.item.text} />
+      <Show when={props.item.refs.length > 0}>
+        <div class="refs">
+          <For each={props.item.refs}>{(n) => <a href={to(n)}>#{n}</a>}</For>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+/** A `send` call in the sender's transcript: where it went and how it began. */
+function SendLine(props: { to: string; line: string }) {
+  const { sessions } = useApp();
+  const target = () => (props.to.length >= 4 ? sessions.list().find((s) => s.id.startsWith(props.to)) : undefined);
+  return (
+    <div class="send-line">
+      <span class="arrow">→</span>{" "}
+      <Show when={target()} fallback={<span>"{props.to.slice(0, 8)}"</span>}>
+        {(s) => <a href={href({ name: "sessions", project: s().project, session: s().id })}>"{s().title}"</a>}
+      </Show>
+      <span class="faint"> {props.line}</span>
+    </div>
+  );
+}
+
 /** A `spawn` call, as a link to the session it started, with that session's live status. */
 function SpawnCard(props: { id: string; tool: ToolItem }) {
   const { sessions } = useApp();
@@ -204,9 +244,12 @@ function SpawnCard(props: { id: string; tool: ToolItem }) {
 function ToolView(props: { tool: ToolItem; cwd: string }) {
   const tool = () => props.tool;
   const spawned = () => spawnedId(tool().name, tool().result);
+  const sent = () => sendSummary(tool().name, tool().input);
   return (
-    <Show when={spawned()} fallback={<PlainTool tool={tool()} cwd={props.cwd} />}>
-      {(id) => <SpawnCard id={id()} tool={tool()} />}
+    <Show when={!sent()} fallback={<SendLine to={sent()!.to} line={sent()!.line} />}>
+      <Show when={spawned()} fallback={<PlainTool tool={tool()} cwd={props.cwd} />}>
+        {(id) => <SpawnCard id={id()} tool={tool()} />}
+      </Show>
     </Show>
   );
 }

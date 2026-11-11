@@ -5,7 +5,7 @@
 //! results, thinking and sub-agent chatter are the bulk of the log and noise for "which session was it".
 
 use atelier_core::Event;
-use atelier_core::domain::{SessionCreated, SessionRenamed, UserMessage};
+use atelier_core::domain::{AgentMessage, SessionCreated, SessionRenamed, UserMessage};
 use serde::Deserialize;
 
 /// Longest text of one document, in bytes (cut at a char boundary).
@@ -20,6 +20,8 @@ pub enum Role {
     Title,
     User,
     Agent,
+    /// From another session.
+    Message,
     Tool,
 }
 
@@ -29,6 +31,7 @@ impl Role {
             Role::Title => "title",
             Role::User => "user",
             Role::Agent => "agent",
+            Role::Message => "message",
             Role::Tool => "tool",
         }
     }
@@ -81,6 +84,8 @@ pub fn docs(ev: &Event) -> Vec<Doc> {
     };
     if let Some(Ok(m)) = ev.parse::<UserMessage>() {
         one(Role::User, m.text)
+    } else if let Some(Ok(m)) = ev.parse::<AgentMessage>() {
+        one(Role::Message, format!("from {}: {}", m.from, m.text))
     } else if let Some(Ok(c)) = ev.parse::<SessionCreated>() {
         one(Role::Title, c.title)
     } else if let Some(Ok(r)) = ev.parse::<SessionRenamed>() {

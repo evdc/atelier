@@ -114,7 +114,16 @@ pub enum Call {
     },
     /// Send a message; starts (or resumes) the agent process if needed.
     #[serde(rename = "session.send")]
-    SessionSend { session: SessionId, text: String },
+    ///
+    /// From an agent (through the MCP server) it becomes an `agent.message` in the target instead, and
+    /// `refs` (events in the sender's stream) travel with it. A person's `refs` are ignored.
+    SessionSend {
+        session: SessionId,
+        text: String,
+        #[serde(default)]
+        #[ts(type = "Array<number>", optional)]
+        refs: Vec<i64>,
+    },
     #[serde(rename = "session.interrupt")]
     SessionInterrupt { session: SessionId },
     #[serde(rename = "session.answer")]

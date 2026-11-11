@@ -63,7 +63,9 @@ export const claude: Adapter = {
     } else if (ev.kind === "cc.user") {
       // Live sessions show the person's typing as `user.message`; imported history only has this
       // entry, so its typed text has to surface here. Meta entries are CC bookkeeping, not typing.
-      const typed = m.isMeta ? "" : typedText(m.message?.content);
+      let typed = m.isMeta ? "" : typedText(m.message?.content);
+      // Another session's message reaches the agent as an envelope; the card for it comes from `agent.message`.
+      if (typed.startsWith("<atelier-message ")) typed = "";
       if (typed) t.items.push({ k: "user", id: `e${ev.seq}`, ts: ev.ts, text: typed });
       for (const b of blocks) {
         if (b.type !== "tool_result" || !b.tool_use_id) continue;

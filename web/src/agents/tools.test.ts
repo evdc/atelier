@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffCounts, diffLines, exitCode, highlightLine, spawnedId, tail, toolStat } from "./tools";
+import { diffCounts, diffLines, exitCode, highlightLine, sendSummary, spawnedId, tail, toolStat } from "./tools";
 
 const show = (a: string, b: string) => diffLines(a, b).map((l) => l.op + l.text);
 
@@ -59,5 +59,18 @@ describe("spawnedId", () => {
     expect(spawnedId("mcp__atelier__spawn", undefined)).toBeNull();
     expect(spawnedId("mcp__atelier__spawn", { text: "spawn refused: …", error: true })).toBeNull();
     expect(spawnedId("mcp__atelier__spawn", { text: "spawn refused: …", error: false })).toBeNull();
+  });
+});
+
+describe("sendSummary", () => {
+  it("names the target as typed and the text's first line", () => {
+    expect(sendSummary("mcp__atelier__send", { to: "7f3a", text: "\n  Check the WAL\nmore" })).toEqual({
+      to: "7f3a",
+      line: "Check the WAL",
+    });
+  });
+  it("is only for send", () => {
+    expect(sendSummary("mcp__atelier__read", { to: "7f3a", text: "x" })).toBeNull();
+    expect(sendSummary("mcp__atelier__send", {})).toBeNull();
   });
 });

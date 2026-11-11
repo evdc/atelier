@@ -11,10 +11,10 @@
 //! The actor and the event that caused the call go onto everything the call appends. Agents may not make
 //! every call ([`Call::agent_allowed`]).
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use atelier_core::domain::{
-    AgentKind, ProjectAdded, ProjectRemoved, SessionArchived, SessionCreated, SessionRenamed, SessionUnarchived,
-    WorkspaceMode, WorkspaceRemoved,
+    AgentKind, AgentMessage, MessageMode, ProjectAdded, ProjectRemoved, SessionArchived, SessionCreated,
+    SessionRenamed, SessionUnarchived, WorkspaceMode, WorkspaceRemoved,
 };
 use atelier_core::{Actor, NewEvent, Seq, SessionId, stream};
 use atelier_proto::{Archived, Call, ProjectRow, SessionRow, SessionStatus};
@@ -143,7 +143,7 @@ pub async fn handle(app: &App, actor: Actor, cause: Option<Seq>, call: Call) -> 
             });
             Ok(json!({ "id": id, "stream": s_stream }))
         }
-        Call::SessionSend { session, text } => {
+        Call::SessionSend { session, text, refs } => {
             if text.trim().is_empty() {
                 bail!("message is empty");
             }
@@ -154,7 +154,10 @@ pub async fn handle(app: &App, actor: Actor, cause: Option<Seq>, call: Call) -> 
             if app.store.read(move |c| views::sessions::worktree_removed(c, &id)).await? {
                 bail!("its worktree was removed when it was archived; start a new session");
             }
-            app.supervisor.send(&s, actor.clone(), cause, text).await?;
+            match &actor {
+                Actor::Agent(from) => send_from_agent(app, from, &s, cause, text, refs).await?,
+                _ => app.supervisor.send(&s, actor.clone(), cause, text).await?,
+            }
             Ok(Value::Null)
         }
         Call::SessionInterrupt { session } => {
@@ -410,6 +413,34 @@ pub(crate) fn title_from(prompt: &str) -> String {
         Some(i) if i > 30 => format!("{}…", &cut[..i]),
         _ => format!("{cut}…"),
     }
+}
+
+/// An agent's `session.send`: checked against the structural limits (DESIGN §11.3), then logged in the target's
+/// stream as an `agent.message` and delivered as an envelope.
+async fn send_from_agent(
+    app: &App,
+    from: &SessionId,
+    to: &SessionRow,
+    cause: Option<Seq>,
+    text: String,
+    refs: Vec<Seq>,
+) -> Result<()> {
+    crate::message::check_text(from, &to.id, &text).map_err(|e| anyhow!(e))?;
+    let sender = session_row(app, from).await?;
+    let id = from.as_str().to_owned();
+    let last = app.store.read(move |c| views::sessions::last_input_hops(c, &id)).await?;
+    let hops = crate::message::next_hops(last).map_err(|e| anyhow!(e))?;
+    let project = project_row(app, to.project.as_str()).await?;
+    let envelope = crate::message::envelope(from, &sender.title, &project.name, MessageMode::Tell, &text);
+    let msg = AgentMessage {
+        from: from.clone(),
+        text: text.trim().to_owned(),
+        mode: MessageMode::Tell,
+        hops,
+        refs,
+        ask_id: None,
+    };
+    app.supervisor.send_from_agent(to, cause, msg, envelope).await
 }
 
 #[cfg(test)]

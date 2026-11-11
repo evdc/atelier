@@ -5,6 +5,7 @@
 // of (draft, event): the same log always yields the same transcript.
 
 import type { Event } from "../gen/Event";
+import type { AgentMessage } from "../gen/AgentMessage";
 import type { PermissionAnswered } from "../gen/PermissionAnswered";
 import type { PermissionRequested } from "../gen/PermissionRequested";
 import type { ProcessExited } from "../gen/ProcessExited";
@@ -41,6 +42,11 @@ export function fold(t: Transcript, ev: Event) {
     case "user.message":
       t.items.push({ k: "user", id, ts: ev.ts, text: (ev.body as UserMessage).text });
       return;
+    case "agent.message": {
+      const b = ev.body as AgentMessage;
+      t.items.push({ k: "message", id, ts: ev.ts, from: b.from, text: b.text, refs: b.refs ?? [] });
+      return;
+    }
     case "user.interrupt":
       t.items.push({ k: "note", id, ts: ev.ts, text: "Interrupted", tone: "quiet" });
       return;

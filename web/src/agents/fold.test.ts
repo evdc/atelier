@@ -48,6 +48,16 @@ describe("fold", () => {
     expect(t.items.map((i) => (i.k === "user" ? i.text : i.k))).toEqual(["first question", "block form"]);
   });
 
+  it("folds an agent message into its own item, with the sender's words and not the envelope", () => {
+    const t = emptyTranscript();
+    fold(t, ev("agent.message", { from: "s9", text: "check the WAL", mode: "tell", hops: 1, refs: [4, 7] }, "agent:s9"));
+    // The envelope the agent read can come back as a `cc.user` entry; it must not read as the person's text.
+    const envelope = '<atelier-message from="s9" title="WAL" project="p" mode="tell">\ncheck the WAL\n</atelier-message>\n(From another session…)';
+    fold(t, ev("cc.user", { type: "user", message: { content: envelope } }));
+    fold(t, ev("cc.user", { type: "user", message: { content: [{ type: "text", text: envelope }] } }));
+    expect(t.items).toEqual([{ k: "message", id: `e${seq - 2}`, ts: seq - 2, from: "s9", text: "check the WAL", refs: [4, 7] }]);
+  });
+
   it("voids pending requests when the process exits", () => {
     const t = emptyTranscript();
     fold(t, ev("permission.requested", { request_id: "r", tool: "Bash", input: {}, raw: {} }));

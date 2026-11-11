@@ -5,7 +5,7 @@
 //! the only writer of a session's agent-side events, and the single authority
 //! on which permission requests are still answerable.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -65,6 +65,12 @@ struct Proc {
     last_active: Instant,
     /// Set by the reaper. The process stays listed until its exit is logged.
     reaping: Arc<AtomicBool>,
+    /// A turn is in progress: a message was written to stdin and its `turn.ended` hasn't come yet.
+    turn_active: bool,
+    /// Other sessions' messages that arrived mid-turn, in order. One is written per finished turn, so a
+    /// message never rides along with (or interrupts) the turn in progress. Lost if the process dies first;
+    /// the log still has them as `agent.message`.
+    queued: VecDeque<String>,
 }
 
 impl Supervisor {
@@ -171,15 +177,60 @@ impl Supervisor {
 
     /// Append a message from `actor` and deliver it, starting the agent if needed.
     pub async fn send(&self, s: &SessionRow, actor: Actor, cause: Option<Seq>, text: String) -> Result<()> {
+        let mut msg = NewEvent::new(s.stream.clone(), actor, &UserMessage { text: text.clone() });
+        msg.cause = cause;
+        self.deliver(s, msg, text, false).await
+    }
+
+    /// Log a message from session `msg.from` and deliver it to `s` as a new turn, with `text` (the envelope)
+    /// as what the agent reads. The event is in the target's stream, authored by the sender.
+    pub async fn send_from_agent(
+        &self,
+        s: &SessionRow,
+        cause: Option<Seq>,
+        msg: AgentMessage,
+        text: String,
+    ) -> Result<()> {
+        let mut ev = NewEvent::new(s.stream.clone(), Actor::Agent(msg.from.clone()), &msg);
+        ev.cause = cause;
+        self.deliver(s, ev, text, true).await
+    }
+
+    /// The path both kinds of message share: log it, start the agent if needed, write it to the agent's stdin.
+    /// With `wait_for_turn`, a busy agent isn't written to: the message is held and written when its turn ends
+    /// (a person's message goes straight through, as they may mean to steer).
+    async fn deliver(&self, s: &SessionRow, event: NewEvent, text: String, wait_for_turn: bool) -> Result<()> {
         if s.archived {
             bail!("session is archived");
         }
         self.wait_stopped(&s.id).await?;
-        let mut msg = NewEvent::new(s.stream.clone(), actor, &UserMessage { text: text.clone() });
-        msg.cause = cause;
-        self.inner.store.append_one(msg).await?;
+        self.inner.store.append_one(event).await?;
         let cmds = self.ensure_running(s).await?;
+        {
+            let mut actors = self.inner.actors.lock().unwrap();
+            if let Some(p) = actors.get_mut(&s.id) {
+                if wait_for_turn && p.turn_active {
+                    p.queued.push_back(text);
+                    return Ok(());
+                }
+                p.turn_active = true;
+            }
+        }
         cmds.send(AgentCmd::Send(text)).map_err(|_| anyhow!("agent exited before receiving the message"))
+    }
+
+    /// A turn ended: start the next held message, if any, else the agent is free.
+    fn turn_finished(&self, id: &SessionId, generation: u64) {
+        let mut actors = self.inner.actors.lock().unwrap();
+        let Some(p) = actors.get_mut(id).filter(|p| p.generation == generation) else { return };
+        match p.queued.pop_front() {
+            Some(text) => {
+                if p.cmds.send(AgentCmd::Send(text)).is_err() {
+                    p.turn_active = false;
+                }
+            }
+            None => p.turn_active = false,
+        }
     }
 
     pub async fn interrupt(&self, s: &SessionRow) -> Result<()> {
@@ -306,7 +357,14 @@ impl Supervisor {
         let reaping = Arc::new(AtomicBool::new(false));
         self.inner.actors.lock().unwrap().insert(
             s.id.clone(),
-            Proc { generation, cmds: handle.cmds.clone(), last_active: Instant::now(), reaping: reaping.clone() },
+            Proc {
+                generation,
+                cmds: handle.cmds.clone(),
+                last_active: Instant::now(),
+                reaping: reaping.clone(),
+                turn_active: false,
+                queued: VecDeque::new(),
+            },
         );
         tokio::spawn(self.clone().pump(s.id.clone(), s.stream.clone(), generation, reaping, token, handle.events));
         Ok(handle.cmds)
@@ -326,6 +384,7 @@ impl Supervisor {
         while let Some(ev) = events.recv().await {
             self.touch(&id, generation);
             let mut turn_ok = false;
+            let mut turn_ended = false;
             let new = match ev {
                 DriverEvent::Raw { kind, body } => NewEvent::raw(&stream, kind, actor.clone(), body),
                 DriverEvent::Ephemeral { kind, body } => {
@@ -336,6 +395,7 @@ impl Supervisor {
                 DriverEvent::Bound { native_id } => NewEvent::new(&stream, actor.clone(), &AgentBound { native_id }),
                 DriverEvent::TurnEnded(t) => {
                     turn_ok = !t.is_error;
+                    turn_ended = true;
                     NewEvent::new(&stream, actor.clone(), &t)
                 }
                 DriverEvent::Permission(p) => {
@@ -357,6 +417,10 @@ impl Supervisor {
             };
             if let Err(e) = self.inner.store.append_one(new).await {
                 tracing::error!(session = %id, "dropping agent event: {e:#}");
+            }
+            if turn_ended {
+                // After the event, so the log shows the turn ending before the next one starts.
+                self.turn_finished(&id, generation);
             }
             if turn_ok {
                 self.spawn_auto_title(&id, &stream);

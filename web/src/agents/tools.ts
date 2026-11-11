@@ -36,6 +36,15 @@ export function spawnedId(name: string, result: { text: string; error: boolean }
   return /^started (\S+) /.exec(result.text)?.[1] ?? null;
 }
 
+/** What a `send` call was addressed to and said: the target as typed (id or prefix) and the text's first line. */
+export function sendSummary(name: string, input: unknown): { to: string; line: string } | null {
+  if (name !== "mcp__atelier__send") return null;
+  const i = (input ?? {}) as { to?: unknown; text?: unknown };
+  if (typeof i.to !== "string") return null;
+  const line = (typeof i.text === "string" ? i.text : "").split("\n").find((l) => l.trim()) ?? "";
+  return { to: i.to, line: line.trim() };
+}
+
 // ---- Rich tool views (pure; components live in ui/tools/) ----
 
 export interface DiffLine {

@@ -67,8 +67,15 @@ export function TranscriptView(props: { live: LiveTranscript; session: Accessor<
   let frame = 0;
   const schedule = () => (frame ||= requestAnimationFrame(sync));
 
+  // Any upward movement that leaves the bottom releases the follow at once: a
+  // distance threshold alone re-pins slow drags (<48px) back to the end every frame.
+  // Layout shrinking clamps scrollTop too, but that stays at distance ~0.
+  let lastTop = 0;
   const onScroll = () => {
-    stick = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48;
+    const dist = pane.scrollHeight - pane.scrollTop - pane.clientHeight;
+    if (pane.scrollTop < lastTop && dist > 2) stick = false;
+    else if (dist <= 2) stick = true;
+    lastTop = pane.scrollTop;
     schedule();
   };
   createEffect(on([() => t.items.length, ready], () => sync()));

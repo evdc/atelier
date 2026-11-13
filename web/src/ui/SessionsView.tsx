@@ -1,8 +1,9 @@
-import { createSignal, For, Match, Show, Switch } from "solid-js";
+import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import type { Imported } from "../gen/Imported";
 import type { SessionRow } from "../gen/SessionRow";
 import { back, href } from "../lib/router";
-import { nest } from "../lib/tree";
+import { listWidth, saveListWidth, setListWidth } from "../lib/layout";
+import { nest, splitTrees, type Node } from "../lib/tree";
 import { byRecent, createView } from "../lib/view";
 import { useApp } from "./context";
 import { EdgeSwipe } from "./EdgeSwipe";
@@ -19,8 +20,17 @@ export function SessionsView(props: { project: string; session?: string; creatin
   const [showArchived, setShowArchived] = createSignal(false);
   const live = () => sessions.list().filter((s) => !s.archived);
   const archived = () => sessions.list().filter((s) => s.archived);
-  const active = () => live().filter(isActive);
-  const earlier = () => live().filter((s) => !isActive(s));
+  // Parents the user folded (live) or unfolded (archived), against each default.
+  const [toggled, setToggled] = createSignal<ReadonlySet<string>>(new Set());
+  const flip = (id: string) =>
+    setToggled((t) => {
+      const next = new Set(t);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  const groups = createMemo(() => splitTrees(nest(live(), toggled()), isActive));
+  const active = () => groups()[0];
+  const earlier = () => groups()[1];
   const shownArchived = () => (showArchived() ? archived() : []);
   const selected = () => (props.session ? sessions.get(props.session) : undefined);
   const hasDetail = () => !!props.session || props.creating;
@@ -42,8 +52,18 @@ export function SessionsView(props: { project: string; session?: string; creatin
     }
   };
 
+  const row = (n: Node) => (
+    <SessionRowLink
+      s={n.row}
+      on={n.row.id === props.session}
+      depth={n.depth}
+      hidden={n.hidden}
+      fold={{ kids: n.kids, open: !n.hidden, toggle: () => flip(n.row.id) }}
+    />
+  );
+
   return (
-    <div class="split" classList={{ "has-detail": hasDetail() }}>
+    <div class="split" classList={{ "has-detail": hasDetail() }} style={{ "--list-w": `${listWidth()}px` }}>
       <section class="list">
         <header class="list-h">
           <h2>{project()?.name ?? ""}</h2>
@@ -71,23 +91,54 @@ export function SessionsView(props: { project: string; session?: string; creatin
           </Show>
           <Show when={active().length}>
             <div class="grp cap">Active</div>
-            <For each={nest(active())}>
-              {(n) => <SessionRowLink s={n.row} on={n.row.id === props.session} depth={n.depth} hidden={n.hidden} />}
+            <For each={active()}>
+              {(n) => row(n)}
             </For>
           </Show>
           <Show when={earlier().length}>
             <div class="grp cap">Earlier</div>
-            <For each={nest(earlier())}>
-              {(n) => <SessionRowLink s={n.row} on={n.row.id === props.session} depth={n.depth} hidden={n.hidden} />}
+            <For each={earlier()}>
+              {(n) => row(n)}
             </For>
           </Show>
           <Show when={shownArchived().length}>
             <div class="grp cap">Archived</div>
-            <For each={nest(shownArchived())}>
-              {(n) => <SessionRowLink s={n.row} on={n.row.id === props.session} depth={n.depth} hidden={n.hidden} />}
+            <For each={nest(shownArchived(), toggled())}>
+              {(n) => row(n)}
             </For>
           </Show>
         </div>
+        <div
+          class="resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize session list"
+          tabindex="0"
+          onPointerDown={(e) => {
+            const el = e.currentTarget;
+            const x0 = e.clientX;
+            const w0 = listWidth();
+            el.setPointerCapture(e.pointerId);
+            el.classList.add("drag");
+            const move = (m: PointerEvent) => setListWidth(w0 + m.clientX - x0);
+            const up = () => {
+              el.classList.remove("drag");
+              el.removeEventListener("pointermove", move);
+              el.removeEventListener("pointerup", up);
+              el.removeEventListener("pointercancel", up);
+              saveListWidth();
+            };
+            el.addEventListener("pointermove", move);
+            el.addEventListener("pointerup", up);
+            el.addEventListener("pointercancel", up);
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+            e.preventDefault();
+            setListWidth(listWidth() + (e.key === "ArrowRight" ? 16 : -16));
+            saveListWidth();
+          }}
+        />
       </section>
 
       <section class="detail" ref={detail}>

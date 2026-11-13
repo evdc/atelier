@@ -1,4 +1,4 @@
-import { createSignal, Show, type Accessor } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show, type Accessor } from "solid-js";
 import type { Archived } from "../gen/Archived";
 import type { SessionRow } from "../gen/SessionRow";
 import { createTranscript } from "../agents/transcript";
@@ -6,7 +6,7 @@ import { back, go, href } from "../lib/router";
 import { prefillNewSession, readersOf, reviewPrompt, reviewTitle, shortCommit } from "../lib/review";
 import { tokens, usd } from "../lib/time";
 import { panelMode, setPanelMode, togglePanel } from "../lib/panel";
-import { ChangesList, createChanges, MergeButton, OpenIn, totals } from "./Changes";
+import { ChangesList, createChanges, MergeButton, OpenInItems, totals } from "./Changes";
 import { Composer } from "./Composer";
 import { useApp } from "./context";
 import { TranscriptView } from "./Transcript";
@@ -42,6 +42,30 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
 
   const act = (p: Promise<unknown>) => p.catch((e: Error) => setError(e.message));
   const busy = () => s().status === "running" || s().status === "waiting";
+
+  const archive = () =>
+    act(conn.call("session.archive", { session: s().id })).then((r) => {
+      const kept = (r as Archived | undefined)?.kept;
+      const kids = liveChildren().length;
+      // Stay put when there is something to read first: why the worktree was kept, or the live children.
+      if (kept || kids) {
+        setNote(
+          `Archived.${kept ? ` Worktree and branch kept: ${kept}.` : ""}${kids ? ` The ${kids} session${kids === 1 ? "" : "s"} it spawned keep${kids === 1 ? "s" : ""} going; archive ${kids === 1 ? "it" : "them"} separately.` : ""}`,
+        );
+      } else go({ name: "sessions", project: s().project });
+    });
+
+  const [menuOpen, setMenuOpen] = createSignal(false);
+  createEffect(() => {
+    if (!menuOpen()) return;
+    const close = () => setMenuOpen(false);
+    // Deferred a tick so the click that opened the menu doesn't close it.
+    const t = setTimeout(() => document.addEventListener("click", close), 0);
+    onCleanup(() => {
+      clearTimeout(t);
+      document.removeEventListener("click", close);
+    });
+  });
 
   const startRename = () => {
     setDraft(s().title);
@@ -103,42 +127,9 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
             Interrupt
           </button>
         </Show>
-        <Show when={s().alive && !busy()}>
-          <button class="btn quiet" title="Stop the agent process; it resumes on your next message" onClick={() => act(conn.call("session.stop", { session: s().id }))}>
-            Stop
-          </button>
-        </Show>
-        <Show
-          when={!s().archived}
-          fallback={
-            <button class="btn quiet" onClick={() => act(conn.call("session.unarchive", { session: s().id }))}>
-              Unarchive
-            </button>
-          }
-        >
-          <button
-            class="btn quiet"
-            title={liveChildren().length ? `Archiving doesn't archive the ${liveChildren().length} session(s) it spawned` : undefined}
-            onClick={() =>
-              act(conn.call("session.archive", { session: s().id })).then((r) => {
-                const kept = (r as Archived | undefined)?.kept;
-                const kids = liveChildren().length;
-                // Stay put when there is something to read first: why the worktree was kept, or the live children.
-                if (kept || kids) {
-                  setNote(
-                    `Archived.${kept ? ` Worktree and branch kept: ${kept}.` : ""}${kids ? ` The ${kids} session${kids === 1 ? "" : "s"} it spawned keep${kids === 1 ? "s" : ""} going; archive ${kids === 1 ? "it" : "them"} separately.` : ""}`,
-                  );
-                } else go({ name: "sessions", project: s().project });
-              })
-            }
-          >
-            Archive
-          </button>
-        </Show>
-        <OpenIn row={s} />
-        <Show when={s().workspace.mode === "worktree" && sum().files > 0}>
-          <button class="btn quiet" title="Start a fresh session that reviews this worktree's changes" onClick={reviewChanges}>
-            Review changes
+        <Show when={busy()}>
+          <button class="btn quiet" onClick={() => act(conn.call("session.interrupt", { session: s().id }))}>
+            Interrupt
           </button>
         </Show>
         {/* The side panel is hidden on narrow screens, so the header carries it there. */}
@@ -154,7 +145,50 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
             <span class="del-n">−{sum().removed}</span>
           </Show>
         </button>
-        <div class="meta">
+        <span class="menu">
+          <button
+            class="btn quiet more"
+            aria-label="Session actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen()}
+            onClick={() => setMenuOpen(!menuOpen())}
+          >
+            ⋯
+          </button>
+          <Show when={menuOpen()}>
+            <div class="menu-list" role="menu">
+              <Show when={s().alive && !busy()}>
+                <button role="menuitem" title="Stop the agent process; it resumes on your next message" onClick={() => act(conn.call("session.stop", { session: s().id }))}>
+                  Stop agent
+                </button>
+              </Show>
+              <Show when={s().workspace.mode === "worktree" && sum().files > 0}>
+                <button role="menuitem" title="Start a fresh session that reviews this worktree's changes" onClick={reviewChanges}>
+                  Review changes
+                </button>
+              </Show>
+              <OpenInItems row={s} onError={setError} />
+              <Show
+                when={!s().archived}
+                fallback={
+                  <button role="menuitem" onClick={() => act(conn.call("session.unarchive", { session: s().id }))}>
+                    Unarchive
+                  </button>
+                }
+              >
+                <button
+                  role="menuitem"
+                  title={liveChildren().length ? `Archiving doesn't archive the ${liveChildren().length} session(s) it spawned` : undefined}
+                  onClick={archive}
+                >
+                  Archive
+                </button>
+              </Show>
+            </div>
+          </Show>
+        </span>
+        </header>
+      <div class="sh-meta">
           <Show when={s().workspace.branch} fallback={<span>project directory</span>}>
             <span>
               worktree <code>{s().workspace.branch}</code>
@@ -203,8 +237,7 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
             <span>{usd(s().cost_usd)}</span>
           </Show>
           <Show when={live.t.model ?? s().model}>{(m) => <span>{m()}</span>}</Show>
-        </div>
-      </header>
+      </div>
 
       <TranscriptView live={live} session={s} />
 

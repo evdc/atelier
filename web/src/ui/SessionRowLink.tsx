@@ -15,6 +15,8 @@ export function SessionRowLink(props: {
   depth?: number;
   /** Spawned sessions folded away under this (archived) row. */
   hidden?: number;
+  /** Whether this row has spawned sessions to fold, and the handler that folds them. A caret is drawn when set. */
+  fold?: { kids: number; open: boolean; toggle: () => void };
   /** Name the parent, for lists where the child isn't shown under it (the inbox). */
   showParent?: boolean;
 }) {
@@ -43,6 +45,24 @@ export function SessionRowLink(props: {
 
   return (
     <div class="swipe" style={props.depth ? { "padding-left": `${props.depth * 16}px` } : undefined}>
+      <Show when={props.fold}>
+        {(f) => (
+          <span class="fold-slot">
+            <Show when={f().kids}>
+              <button
+                type="button"
+                class="fold"
+                classList={{ open: f().open }}
+                aria-expanded={f().open}
+                aria-label={f().open ? "Hide spawned sessions" : `Show ${f().kids} spawned session${f().kids === 1 ? "" : "s"}`}
+                onClick={f().toggle}
+              >
+                ›
+              </button>
+            </Show>
+          </span>
+        )}
+      </Show>
       <span class="swipe-act" classList={{ armed: armed() }} aria-hidden="true">
         Archive
       </span>

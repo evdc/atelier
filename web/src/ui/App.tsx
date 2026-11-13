@@ -8,6 +8,7 @@ import { notifyNeedsYou, setDockBadge } from "../lib/notify";
 import { route } from "../lib/router";
 import { byRecent, createView } from "../lib/view";
 import { trackViewport } from "../lib/viewport";
+import { sidebarOpen } from "../lib/layout";
 import { Ctx } from "./context";
 import { AllSessionsView, NewAnywhereView, WaitingView } from "./Inbox";
 import { ProjectsView } from "./ProjectsView";
@@ -49,7 +50,7 @@ export function App(props: { conn: Conn }) {
 
   return (
     <Ctx.Provider value={{ conn: props.conn, projects, sessions, usage }}>
-      <div class="app">
+      <div class="app" classList={{ "side-off": !sidebarOpen() }}>
         <Sidebar />
         <main class="main">
           <Switch>

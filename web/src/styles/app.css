@@ -6,6 +6,9 @@
   height: 100%;
   padding-top: env(safe-area-inset-top, 0px);
 }
+.app.side-off {
+  --side-w: 44px;
+}
 .main {
   min-width: 0;
   min-height: 0;
@@ -22,13 +25,33 @@
   flex-direction: column;
   min-height: 0;
 }
+/* Every pane's header shares --head-h so their rules line up across the screen. */
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 14px 12px;
+  justify-content: space-between;
+  height: var(--head-h);
+  box-sizing: border-box;
+  padding: 0 8px 0 14px;
   border-bottom: 1px solid var(--line);
+}
+.brand-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   text-decoration: none;
+  min-width: 0;
+}
+.side-toggle {
+  padding: 2px 8px;
+}
+.side-off .brand {
+  padding: 0;
+  justify-content: center;
+}
+.side-off .brand-link,
+.side-off nav {
+  display: none;
 }
 .brand b {
   font: 400 21px/1 var(--f-display);
@@ -409,11 +432,32 @@
   flex-direction: column;
   min-height: 0;
 }
+.list {
+  position: relative;
+}
+.resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 7px;
+  cursor: col-resize;
+  z-index: 3;
+  touch-action: none;
+}
+.resize:hover,
+.resize.drag,
+.resize:focus-visible {
+  background: linear-gradient(to right, transparent 3px, var(--hair) 3px, var(--hair) 4px, transparent 4px);
+  outline: none;
+}
 .list-h {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  height: var(--head-h);
+  box-sizing: border-box;
+  padding: 0 12px;
   border-bottom: 1px solid var(--line);
 }
 .list-h h2 {
@@ -524,14 +568,25 @@
   display: flex;
   gap: 10px;
   align-items: center;
-  padding: 10px 18px;
+  height: var(--head-h);
+  box-sizing: border-box;
+  padding: 0 18px;
   border-bottom: 1px solid var(--line);
-  flex-wrap: wrap;
+}
+/* The title and the changes button give way first; the ⋯ menu stays pinned at the right edge. */
+.sh > * {
+  flex: none;
+}
+.sh > .panel-toggle {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sh h3 {
   font-size: 20px;
-  flex: 1;
-  min-width: 160px;
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -557,8 +612,8 @@
   outline-offset: 3px;
 }
 .sh .title-edit {
-  flex: 1;
-  min-width: 160px;
+  flex: 1 1 0;
+  min-width: 0;
   font-family: var(--f-display);
   font-size: 20px;
   color: var(--ink);
@@ -569,20 +624,23 @@
   padding: 0 0 2px;
   outline: none;
 }
-.sh .meta {
-  width: 100%;
+.sh-meta {
+  padding: 8px 18px;
+}
+.sh .meta,
+.sh-meta {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
   font-size: 12px;
   color: var(--ink-3);
 }
-.sh .meta code {
+.sh-meta code {
   color: var(--ink-2);
 }
 
 /* Where a session's workspace came from: quiet, and gold because it's worth noticing. */
-.sh .meta .prov {
+.sh-meta .prov {
   color: var(--gold);
 }
 
@@ -1006,6 +1064,9 @@
 
 /* ── narrow screens (phone) ────────────────────────────────────────────── */
 @media (max-width: 760px) {
+  .resize {
+    display: none;
+  }
   /* Pinned to the visual viewport (lib/viewport.ts), so the keyboard pushes
      the composer up rather than covering it. */
   .app {
@@ -1118,9 +1179,13 @@
     padding-right: 14px;
   }
   .sh {
-    padding-top: 4px;
-    padding-bottom: 8px;
-    gap: 4px 6px;
+    gap: 6px;
+  }
+  .sh-meta {
+    padding: 6px 14px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    overflow: hidden;
   }
   .sh .back {
     display: inline-flex;
@@ -1135,37 +1200,26 @@
   }
   /* row 1: back, status, title; row 2: meta on one line, then the actions */
   .sh h3 {
-    flex: 1 1 calc(100% - 80px);
+    flex: 1;
     min-width: 0;
     font-size: 18px;
   }
   .sh .title-edit {
-    flex: 1 1 calc(100% - 80px);
+    flex: 1;
+    min-width: 0;
     font-size: 18px;
   }
   .sh .tag {
     display: none;
   }
-  .sh .meta {
-    order: 1;
-    width: auto;
-    flex: 1 1 120px; /* too wide to join the title's row */
-    min-width: 0;
-    flex-wrap: nowrap;
-    white-space: nowrap;
-    overflow: hidden;
-  }
-  .sh .meta > span {
+  .sh-meta > span {
     flex: none;
   }
-  .sh .meta > span:first-child {
+  .sh-meta > span:first-child {
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .sh .btn:not(.back) {
-    order: 2;
   }
 
   /* touch targets: ≥ 44 px */
@@ -1398,6 +1452,10 @@
   border-width: 1px 0 0;
 }
 
+.more {
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
 /* Dropdown menu */
 .menu {
   position: relative;
@@ -1410,7 +1468,7 @@
   top: 100%;
   right: 0;
   z-index: 5;
-  min-width: 130px;
+  min-width: 150px;
   margin-top: 2px;
   background: var(--paper);
   border: 1px solid var(--ink);
@@ -1419,6 +1477,7 @@
 }
 .menu-list button {
   all: unset;
+  white-space: nowrap;
   padding: 5px 12px;
   cursor: pointer;
   font-size: 13px;
@@ -1462,10 +1521,44 @@
   position: relative;
   overflow: hidden;
 }
+.swipe {
+  display: flex;
+}
 .swipe .row {
+  flex: 1;
+  min-width: 0;
   position: relative;
   background: var(--paper);
   touch-action: pan-y;
+}
+/* Reserved on every row of a nested list so status dots stay aligned. */
+.fold-slot {
+  flex: none;
+  width: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+.fold {
+  all: unset;
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  font: 14px/1 var(--f-mono);
+  color: var(--ink-3);
+  transition: rotate 0.12s;
+}
+.fold.open {
+  rotate: 90deg;
+}
+.fold:hover,
+.fold:focus-visible {
+  color: var(--ink);
+  background: var(--wash);
 }
 .swipe-act {
   position: absolute;

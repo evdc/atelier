@@ -28,6 +28,7 @@
   --f-ui: "Source Serif 4", "Iowan Old Style", Georgia, serif;
   --f-mono: "Fragment Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
+  --head-h: 52px;
   --side-w: 208px;
   --list-w: 300px;
   --panel-w: 340px;

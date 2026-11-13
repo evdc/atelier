@@ -1,5 +1,6 @@
 import { For, Show } from "solid-js";
 import { href, route } from "../lib/router";
+import { sidebarOpen, toggleSidebar } from "../lib/layout";
 import { useApp } from "./context";
 
 export function Sidebar() {
@@ -12,10 +13,20 @@ export function Sidebar() {
 
   return (
     <aside class="side">
-      <a class="brand" href={href({ name: "projects" })}>
-        <span class="emblem" aria-hidden="true" />
-        <b>Atelier</b>
-      </a>
+      <div class="brand">
+        <a class="brand-link" href={href({ name: "projects" })}>
+          <span class="emblem" aria-hidden="true" />
+          <b>Atelier</b>
+        </a>
+        <button
+          class="btn quiet side-toggle"
+          aria-label={sidebarOpen() ? "Collapse sidebar" : "Expand sidebar"}
+          title={sidebarOpen() ? "Collapse sidebar" : "Expand sidebar"}
+          onClick={toggleSidebar}
+        >
+          {sidebarOpen() ? "‹" : "›"}
+        </button>
+      </div>
       <nav>
         <a class="it" classList={{ on: route().name === "projects" }} href={href({ name: "projects" })}>
           <span>All projects</span>

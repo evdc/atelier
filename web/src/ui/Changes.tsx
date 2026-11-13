@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, on, onCleanup, Show, type Accessor } from "solid-js";
+import { createEffect, createSignal, For, on, Show, type Accessor } from "solid-js";
 import { patchLines } from "../agents/patch";
 import type { Changes } from "../gen/Changes";
 import type { FileChange } from "../gen/FileChange";
@@ -100,45 +100,18 @@ const KINDS: [OpenKind, string][] = [
   ["finder", "Finder"],
 ];
 
-/** "Open in…" menu. Desktop app + local server only: the path is a path on this machine. */
-export function OpenIn(props: { row: Accessor<SessionRow> }) {
+/** "Open in…" entries for the session menu. Desktop app + local server only: the path is a path on this machine. */
+export function OpenInItems(props: { row: Accessor<SessionRow>; onError: (e: string) => void }) {
   const s = props.row;
-  const [open, setOpen] = createSignal(false);
-  const [err, setErr] = createSignal<string | null>(null);
-  createEffect(() => {
-    if (!open()) return;
-    const close = () => setOpen(false);
-    // Deferred a tick so the click that opened the menu doesn't close it.
-    const t = setTimeout(() => document.addEventListener("click", close), 0);
-    onCleanup(() => {
-      clearTimeout(t);
-      document.removeEventListener("click", close);
-    });
-  });
   return (
     <Show when={canOpenIn(serverConfig()?.url ?? "") && !s().archived}>
-      <span class="menu">
-        <button class="btn quiet" aria-haspopup="menu" aria-expanded={open()} onClick={() => setOpen(!open())}>
-          Open in… ▾
-        </button>
-        <Show when={open()}>
-          <div class="menu-list" role="menu">
-            <For each={KINDS}>
-              {([kind, label]) => (
-                <button
-                  role="menuitem"
-                  onClick={() => openIn(kind, s().workspace.path).then(() => setErr(null), (e) => setErr(String(e)))}
-                >
-                  {label}
-                </button>
-              )}
-            </For>
-          </div>
-        </Show>
-        <Show when={err()}>
-          <span class="err">{err()}</span>
-        </Show>
-      </span>
+      <For each={KINDS}>
+        {([kind, label]) => (
+          <button role="menuitem" onClick={() => openIn(kind, s().workspace.path).catch((e) => props.onError(String(e)))}>
+            Open in {label}
+          </button>
+        )}
+      </For>
     </Show>
   );
 }

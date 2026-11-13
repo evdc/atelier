@@ -113,6 +113,7 @@ export function NewSession(props: { project: ProjectRow }) {
           Model
           <select class="field" value={model()} onChange={(e) => setModel(e.currentTarget.value)}>
             <option value="">default</option>
+            <option value="fable">Fable</option>
             <option value="opus">Opus</option>
             <option value="sonnet">Sonnet</option>
             <option value="haiku">Haiku</option>

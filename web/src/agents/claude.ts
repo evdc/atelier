@@ -66,7 +66,7 @@ export const claude: Adapter = {
       let typed = m.isMeta ? "" : typedText(m.message?.content);
       // Another session's message reaches the agent as an envelope; the card for it comes from `agent.message`.
       if (typed.startsWith("<atelier-message ")) typed = "";
-      if (typed) t.items.push({ k: "user", id: `e${ev.seq}`, ts: ev.ts, text: typed });
+      if (typed) t.items.push({ k: "user", id: `e${ev.seq}`, ts: ev.ts, text: typed, images: [] });
       for (const b of blocks) {
         if (b.type !== "tool_result" || !b.tool_use_id) continue;
         const item = t.items[t.tools[b.tool_use_id] ?? -1];

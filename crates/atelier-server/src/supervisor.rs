@@ -70,7 +70,7 @@ struct Proc {
     /// Other sessions' messages that arrived mid-turn, in order. One is written per finished turn, so a
     /// message never rides along with (or interrupts) the turn in progress. Lost if the process dies first;
     /// the log still has them as `agent.message`.
-    queued: VecDeque<String>,
+    queued: VecDeque<(String, Vec<Image>)>,
 }
 
 impl Supervisor {
@@ -176,10 +176,18 @@ impl Supervisor {
     }
 
     /// Append a message from `actor` and deliver it, starting the agent if needed.
-    pub async fn send(&self, s: &SessionRow, actor: Actor, cause: Option<Seq>, text: String) -> Result<()> {
-        let mut msg = NewEvent::new(s.stream.clone(), actor, &UserMessage { text: text.clone() });
+    pub async fn send(
+        &self,
+        s: &SessionRow,
+        actor: Actor,
+        cause: Option<Seq>,
+        text: String,
+        images: Vec<Image>,
+    ) -> Result<()> {
+        let mut msg =
+            NewEvent::new(s.stream.clone(), actor, &UserMessage { text: text.clone(), images: images.clone() });
         msg.cause = cause;
-        self.deliver(s, msg, text, false).await
+        self.deliver(s, msg, text, images, false).await
     }
 
     /// Log a message from session `msg.from` and deliver it to `s` as a new turn, with `text` (the envelope)
@@ -193,13 +201,20 @@ impl Supervisor {
     ) -> Result<()> {
         let mut ev = NewEvent::new(s.stream.clone(), Actor::Agent(msg.from.clone()), &msg);
         ev.cause = cause;
-        self.deliver(s, ev, text, true).await
+        self.deliver(s, ev, text, Vec::new(), true).await
     }
 
     /// The path both kinds of message share: log it, start the agent if needed, write it to the agent's stdin.
     /// With `wait_for_turn`, a busy agent isn't written to: the message is held and written when its turn ends
     /// (a person's message goes straight through, as they may mean to steer).
-    async fn deliver(&self, s: &SessionRow, event: NewEvent, text: String, wait_for_turn: bool) -> Result<()> {
+    async fn deliver(
+        &self,
+        s: &SessionRow,
+        event: NewEvent,
+        text: String,
+        images: Vec<Image>,
+        wait_for_turn: bool,
+    ) -> Result<()> {
         if s.archived {
             bail!("session is archived");
         }
@@ -210,13 +225,13 @@ impl Supervisor {
             let mut actors = self.inner.actors.lock().unwrap();
             if let Some(p) = actors.get_mut(&s.id) {
                 if wait_for_turn && p.turn_active {
-                    p.queued.push_back(text);
+                    p.queued.push_back((text, images));
                     return Ok(());
                 }
                 p.turn_active = true;
             }
         }
-        cmds.send(AgentCmd::Send(text)).map_err(|_| anyhow!("agent exited before receiving the message"))
+        cmds.send(AgentCmd::Send { text, images }).map_err(|_| anyhow!("agent exited before receiving the message"))
     }
 
     /// A turn ended: start the next held message, if any, else the agent is free.
@@ -224,8 +239,8 @@ impl Supervisor {
         let mut actors = self.inner.actors.lock().unwrap();
         let Some(p) = actors.get_mut(id).filter(|p| p.generation == generation) else { return };
         match p.queued.pop_front() {
-            Some(text) => {
-                if p.cmds.send(AgentCmd::Send(text)).is_err() {
+            Some((text, images)) => {
+                if p.cmds.send(AgentCmd::Send { text, images }).is_err() {
                     p.turn_active = false;
                 }
             }

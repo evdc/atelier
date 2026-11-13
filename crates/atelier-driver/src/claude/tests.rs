@@ -79,7 +79,7 @@ async fn drives_a_process_end_to_end() {
             system_append: None,
         })
         .unwrap();
-    h.cmds.send(AgentCmd::Send("hello".into())).unwrap();
+    h.cmds.send(AgentCmd::Send { text: "hello".into(), images: vec![] }).unwrap();
 
     let mut kinds = Vec::new();
     while let Some(ev) = h.events.recv().await {
@@ -193,4 +193,20 @@ fn read_only_note_and_system_append_share_one_flag() {
     assert_eq!(args.iter().filter(|a| *a == "--append-system-prompt").count(), 1);
     let text = after(&args, "--append-system-prompt").unwrap();
     assert!(text.starts_with("You are in another session's worktree") && text.ends_with("\n\nYou are s1."), "{text}");
+}
+
+#[test]
+fn user_content_is_a_string_until_there_are_pictures() {
+    use atelier_core::domain::Image;
+    assert_eq!(user_content("hi".into(), &[]), json!("hi"));
+    let img = Image { media_type: "image/png".into(), data: "AAAA".into() };
+    assert_eq!(
+        user_content("look".into(), std::slice::from_ref(&img)),
+        json!([
+            { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "AAAA" } },
+            { "type": "text", "text": "look" },
+        ])
+    );
+    // The API refuses empty text blocks; a picture alone is a whole message.
+    assert_eq!(user_content(" ".into(), &[img]).as_array().unwrap().len(), 1);
 }

@@ -920,6 +920,48 @@
   color: var(--ink-3);
   font-style: italic;
 }
+.composer-imgs {
+  margin: 6px 18px -2px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.thumb {
+  position: relative;
+  border: 1px solid var(--line);
+  background: var(--card);
+  line-height: 0;
+}
+.thumb img {
+  height: 64px;
+  max-width: 120px;
+  object-fit: contain;
+}
+.thumb button {
+  all: unset;
+  cursor: pointer;
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 1px 5px;
+  line-height: 1.2;
+  font-size: 13px;
+  background: var(--paper);
+  border-left: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.msg.user .imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.msg.user .imgs img {
+  height: 140px; /* fixed, so the transcript's row estimates hold before the image decodes */
+  max-width: 100%;
+  object-fit: contain;
+  border: 1px solid var(--line);
+}
 .composer-note {
   margin: -8px 18px 10px;
   font-size: 12px;

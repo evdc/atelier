@@ -4,8 +4,10 @@
 // gets its result, a permission gets answered). That keeps rendering
 // incremental: finished items never re-render.
 
+import type { Image } from "../gen/Image";
+
 export type Item =
-  | { k: "user"; id: string; ts: number; text: string }
+  | { k: "user"; id: string; ts: number; text: string; images: Image[] }
   /** From another session. `text` is the sender's own words: the envelope the agent reads is never stored here. */
   | { k: "message"; id: string; ts: number; from: string; text: string; refs: number[] }
   | { k: "text"; id: string; ts: number; text: string; sub?: string }

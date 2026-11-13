@@ -339,7 +339,10 @@ mod tests {
         assert_eq!(row.status, SessionStatus::Running);
 
         // A person's word resets it; the agent's own events don't touch it.
-        store.append_one(NewEvent::new(stream, Actor::User, &UserMessage { text: "ok".into() })).await.unwrap();
+        store
+            .append_one(NewEvent::new(stream, Actor::User, &UserMessage { text: "ok".into(), images: vec![] }))
+            .await
+            .unwrap();
         assert_eq!(hops().await.unwrap(), 0);
         store.append_one(NewEvent::new(stream, Actor::Agent("s2".into()), &msg(5))).await.unwrap();
         let turn = TurnEnded { is_error: false, cost_usd: None, duration_ms: None, raw: serde_json::Value::Null };

@@ -202,6 +202,21 @@ impl AgentDriver for ClaudeCode {
 
 type Pending = Arc<Mutex<HashMap<String, Value>>>;
 
+/// A plain string for text alone; content blocks (images first, as the API prefers) when there are pictures.
+fn user_content(text: String, images: &[atelier_core::domain::Image]) -> serde_json::Value {
+    if images.is_empty() {
+        return json!(text);
+    }
+    let mut blocks: Vec<_> = images
+        .iter()
+        .map(|i| json!({ "type": "image", "source": { "type": "base64", "media_type": i.media_type, "data": i.data } }))
+        .collect();
+    if !text.trim().is_empty() {
+        blocks.push(json!({ "type": "text", "text": text }));
+    }
+    json!(blocks)
+}
+
 async fn write_stdin(
     mut stdin: ChildStdin,
     mut cmds: mpsc::UnboundedReceiver<AgentCmd>,
@@ -214,9 +229,9 @@ async fn write_stdin(
         let line = tokio::select! {
             Some(line) = lines.recv() => line,
             cmd = cmds.recv() => match cmd {
-                Some(AgentCmd::Send(text)) => json!({
+                Some(AgentCmd::Send { text, images }) => json!({
                     "type": "user",
-                    "message": { "role": "user", "content": text },
+                    "message": { "role": "user", "content": user_content(text, &images) },
                 })
                 .to_string(),
                 Some(AgentCmd::Interrupt) => json!({

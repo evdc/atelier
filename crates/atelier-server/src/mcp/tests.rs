@@ -165,7 +165,7 @@ async fn read_tool_returns_the_other_sessions_text() {
     let (app, _t) = app().await;
     let p = project(&app, "mine").await;
     let (me, other) = (session(&app, &p, "Me").await, session(&app, &p, "Other").await);
-    let say = UserMessage { text: "why is the WAL growing?".into() };
+    let say = UserMessage { text: "why is the WAL growing?".into(), images: vec![] };
     app.store.append_one(NewEvent::new(stream::session(&p, &other), Actor::User, &say)).await.unwrap();
     let r = handle(&app, &me, call(1, "tools/call", json!({"name": "read", "arguments": {"session": other.as_str()}})))
         .await

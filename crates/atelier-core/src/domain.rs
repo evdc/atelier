@@ -173,6 +173,20 @@ kind!(WorkspaceRemoved, "workspace.removed");
 #[ts(export)]
 pub struct UserMessage {
     pub text: String,
+    /// Pasted or dropped pictures (screenshots), sent to the agent with the text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<Image>>", optional)]
+    pub images: Vec<Image>,
+}
+
+/// A picture attached to a message. Stored inline, so the log alone replays the conversation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Image {
+    /// `image/png`, `image/jpeg`, `image/gif` or `image/webp`: what the model accepts.
+    pub media_type: String,
+    /// Base64, without a `data:` prefix.
+    pub data: String,
 }
 kind!(UserMessage, "user.message");
 

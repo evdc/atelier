@@ -107,4 +107,11 @@ describe("fold", () => {
     expect(streamDelta("cc.stream_event", { type: "content_block_start" })).toEqual({ reset: true });
     expect(streamDelta("zz.x", {})).toEqual({});
   });
+
+  it("carries a message's images, and tolerates old events without any", () => {
+    const t = emptyTranscript();
+    fold(t, ev("user.message", { text: "see", images: [{ media_type: "image/png", data: "AAAA" }] }, "user"));
+    fold(t, ev("user.message", { text: "plain" }, "user"));
+    expect(t.items.map((i) => (i.k === "user" ? i.images.length : -1))).toEqual([1, 0]);
+  });
 });

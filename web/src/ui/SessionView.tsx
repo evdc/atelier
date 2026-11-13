@@ -217,7 +217,7 @@ export function SessionView(props: { row: Accessor<SessionRow> }) {
       <Show when={!s().archived}>
         <Composer
           waiting={s().status === "waiting"}
-          onSend={(text) => conn.call("session.send", { session: s().id, text })}
+          onSend={(text, images) => conn.call("session.send", { session: s().id, text, images })}
         />
       </Show>
       </div>

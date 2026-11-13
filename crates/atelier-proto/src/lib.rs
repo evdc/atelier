@@ -123,6 +123,10 @@ pub enum Call {
         #[serde(default)]
         #[ts(type = "Array<number>", optional)]
         refs: Vec<i64>,
+        /// Pictures to show the agent. A person's only; an agent's are ignored.
+        #[serde(default)]
+        #[ts(as = "Option<Vec<atelier_core::domain::Image>>", optional)]
+        images: Vec<atelier_core::domain::Image>,
     },
     #[serde(rename = "session.interrupt")]
     SessionInterrupt { session: SessionId },

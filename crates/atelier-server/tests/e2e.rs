@@ -1222,7 +1222,8 @@ async fn hops_stop_ping_pong_and_a_person_resets_them() {
     c.until(|m| session_row_matches(m, |r| r["id"] == b.as_str() && r["status"] == "waiting")).await;
 
     let send = |from: &str, to: &str| {
-        let call = Call::SessionSend { session: SessionId::from(to), text: "again".into(), refs: vec![] };
+        let call =
+            Call::SessionSend { session: SessionId::from(to), text: "again".into(), refs: vec![], images: vec![] };
         let (app, from) = (app.clone(), SessionId::from(from));
         async move { atelier_server::rpc::handle(&app, Actor::Agent(from), None, call).await }
     };

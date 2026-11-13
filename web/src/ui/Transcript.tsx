@@ -3,6 +3,7 @@ import type { SessionRow } from "../gen/SessionRow";
 import type { Item } from "../agents/model";
 import type { LiveTranscript } from "../agents/transcript";
 import { usd } from "../lib/time";
+import { dataUrl } from "../lib/images";
 import { sendSummary, spawnedId, summarize, toolStat } from "../agents/tools";
 import { href } from "../lib/router";
 import { useApp } from "./context";
@@ -156,6 +157,11 @@ function ItemView(props: {
           <div class="msg user">
             <span class="who">you</span>
             <div class="body">{u().text}</div>
+            <Show when={u().images.length}>
+              <div class="imgs">
+                <For each={u().images}>{(i) => <img src={dataUrl(i)} loading="lazy" decoding="async" alt="attached" />}</For>
+              </div>
+            </Show>
           </div>
         )}
       </Match>

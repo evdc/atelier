@@ -219,7 +219,12 @@ async fn send(app: &App, me: &SessionId, args: SendArgs) -> Result<String, ToolE
         })
         .await?;
     let busy = matches!(target.status, Running | Waiting);
-    let call = atelier_proto::Call::SessionSend { session: target.id.clone(), text: args.text, refs: args.refs };
+    let call = atelier_proto::Call::SessionSend {
+        session: target.id.clone(),
+        text: args.text,
+        refs: args.refs,
+        images: Vec::new(),
+    };
     crate::rpc::handle(app, atelier_core::Actor::Agent(me.clone()), cause, call).await?;
     let state = if busy { "running — it will see this after its current turn" } else { "idle — woke it" };
     Ok(format!("delivered to {} ({state})", target.id))
@@ -592,7 +597,7 @@ mod tests {
         for (i, m) in messages.iter().enumerate() {
             // Alternate user and agent, with a tool result in between that must never show up.
             let ev = if i % 2 == 0 {
-                NewEvent::new(STREAM, Actor::User, &UserMessage { text: (*m).into() })
+                NewEvent::new(STREAM, Actor::User, &UserMessage { text: (*m).into(), images: vec![] })
             } else {
                 let body = json!({"message": {"content": [{"type": "text", "text": m}]}}).to_string();
                 NewEvent::raw(STREAM, "cc.assistant", Actor::Agent("s1".into()), RawValue::from_string(body).unwrap())

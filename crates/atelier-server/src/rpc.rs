@@ -23,6 +23,24 @@ use serde_json::{Value, json};
 use crate::{App, browse, views, workspace};
 
 const MAX_TITLE_CHARS: usize = 200;
+const MAX_IMAGES: usize = 8;
+/// Base64 bytes per picture; the API's own limit is 5 MB.
+const MAX_IMAGE_BYTES: usize = 7 * 1024 * 1024;
+
+fn check_images(images: &[atelier_core::domain::Image]) -> Result<()> {
+    if images.len() > MAX_IMAGES {
+        bail!("at most {MAX_IMAGES} images per message");
+    }
+    for i in images {
+        if !matches!(i.media_type.as_str(), "image/png" | "image/jpeg" | "image/gif" | "image/webp") {
+            bail!("unsupported image type {}", i.media_type);
+        }
+        if i.data.len() > MAX_IMAGE_BYTES {
+            bail!("an image is larger than 5 MB");
+        }
+    }
+    Ok(())
+}
 
 pub async fn handle(app: &App, actor: Actor, cause: Option<Seq>, call: Call) -> Result<Value> {
     if matches!(actor, Actor::Agent(_)) && !call.agent_allowed() {
@@ -137,16 +155,17 @@ pub async fn handle(app: &App, actor: Actor, cause: Option<Seq>, call: Call) -> 
                 if let Some(src) = seed_from {
                     workspace::seed(std::path::Path::new(&src), std::path::Path::new(&ws_path)).await;
                 }
-                if let Err(e) = app.supervisor.send(&s, actor, cause, prompt).await {
+                if let Err(e) = app.supervisor.send(&s, actor, cause, prompt, Vec::new()).await {
                     tracing::error!("starting session {}: {e:#}", s.id.as_str());
                 }
             });
             Ok(json!({ "id": id, "stream": s_stream }))
         }
-        Call::SessionSend { session, text, refs } => {
-            if text.trim().is_empty() {
+        Call::SessionSend { session, text, refs, images } => {
+            if text.trim().is_empty() && images.is_empty() {
                 bail!("message is empty");
             }
+            check_images(&images)?;
             let s = session_row(app, &session).await?;
             // Archiving released the worktree (its directory may be pooled for another session), and
             // un-archiving doesn't bring it back. Refuse before the message is logged.
@@ -156,7 +175,7 @@ pub async fn handle(app: &App, actor: Actor, cause: Option<Seq>, call: Call) -> 
             }
             match &actor {
                 Actor::Agent(from) => send_from_agent(app, from, &s, cause, text, refs).await?,
-                _ => app.supervisor.send(&s, actor.clone(), cause, text).await?,
+                _ => app.supervisor.send(&s, actor.clone(), cause, text, images).await?,
             }
             Ok(Value::Null)
         }
@@ -242,7 +261,7 @@ pub async fn handle(app: &App, actor: Actor, cause: Option<Seq>, call: Call) -> 
                      Don't abort the merge.",
                     r.target
                 );
-                app.supervisor.send(&s, actor.clone(), cause, text).await?;
+                app.supervisor.send(&s, actor.clone(), cause, text, Vec::new()).await?;
             }
             Ok(serde_json::to_value(r)?)
         }

@@ -74,7 +74,10 @@ pub struct AgentHandle {
 #[derive(Debug, Clone)]
 pub enum AgentCmd {
     /// Start a turn with a user message.
-    Send(String),
+    Send {
+        text: String,
+        images: Vec<atelier_core::domain::Image>,
+    },
     /// Stop the current turn; the session continues.
     Interrupt,
     Answer {

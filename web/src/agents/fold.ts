@@ -40,7 +40,10 @@ export function fold(t: Transcript, ev: Event) {
   const id = `e${ev.seq}`;
   switch (ev.kind) {
     case "user.message":
-      t.items.push({ k: "user", id, ts: ev.ts, text: (ev.body as UserMessage).text });
+      {
+        const b = ev.body as UserMessage;
+        t.items.push({ k: "user", id, ts: ev.ts, text: b.text, images: b.images ?? [] });
+      }
       return;
     case "agent.message": {
       const b = ev.body as AgentMessage;

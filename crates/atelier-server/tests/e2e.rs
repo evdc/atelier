@@ -1403,3 +1403,52 @@ async fn atelier_files_become_events() {
     assert_eq!(file_events(&c).len(), total + 1);
     assert_eq!(file_events(&c).last().unwrap()["body"]["text"], "note, edited");
 }
+
+#[tokio::test]
+async fn tickets_view_follows_files_on_disk() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let tickets = repo.join(".atelier/tickets");
+    std::fs::create_dir_all(&tickets).unwrap();
+    let ticket = tickets.join("AT-1.md");
+    let text = |status: &str| format!("---\nid: AT-1\ntitle: \"One: `x`\"\nstatus: {status}\n---\n- [ ] a\n");
+    std::fs::write(&ticket, text("open")).unwrap();
+    std::fs::write(tickets.join("README.md"), "# Tickets").unwrap();
+
+    let config = Config {
+        home: tmp.path().join("home"),
+        listen: "127.0.0.1:0".parse().unwrap(),
+        listen_tailscale: false,
+        tailscale_bin: "false".into(),
+        claude_bin: FAKE.into(),
+        claude_home: tmp.path().join("claude"),
+        idle_timeout: Duration::from_secs(600),
+        auto_title: false,
+        spawn: Default::default(),
+        token: Some("secret".into()),
+    };
+    std::fs::create_dir_all(&config.home).unwrap();
+    let app = App::start(config).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(listener, app.router()).into_future());
+    let mut c = Client::connect(addr, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+
+    c.send(json!({"t": "watch", "id": 2, "view": "tickets", "scope": project})).await;
+    // The initial scan may land before or after the snapshot; either way the row shows up.
+    let has_row = |m: &Value, status: &str| {
+        m["watch"] == 2
+            && ["rows", "upsert"].iter().any(|k| {
+                m[k].as_array().is_some_and(|rs| rs.iter().any(|r| r["id"] == "AT-1" && r["status"] == status))
+            })
+    };
+    let m = c.until(|m| has_row(m, "open")).await;
+    let row = m["rows"].as_array().or(m["upsert"].as_array()).unwrap().iter().find(|r| r["id"] == "AT-1").unwrap();
+    assert_eq!((row["title"].as_str(), row["checks_total"].as_u64()), (Some("One: `x`"), Some(1)));
+    assert!(!c.seen.iter().any(|m| m["watch"] == 2 && m.to_string().contains("README")));
+
+    std::fs::write(&ticket, text("in progress")).unwrap();
+    c.until(|m| has_row(m, "in progress")).await;
+    app.supervisor.shutdown().await;
+}

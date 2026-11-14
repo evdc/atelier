@@ -350,6 +350,8 @@ pub enum ViewName {
     Sessions,
     /// Rows: [`UsageRow`], at most one. Unscoped.
     Usage,
+    /// Rows: [`TicketRow`]. Scope: project id.
+    Tickets,
 }
 
 impl ViewName {
@@ -358,6 +360,7 @@ impl ViewName {
             ViewName::Projects => "projects",
             ViewName::Sessions => "sessions",
             ViewName::Usage => "usage",
+            ViewName::Tickets => "tickets",
         }
     }
 }
@@ -412,6 +415,34 @@ impl SessionStatus {
             _ => Self::Idle,
         }
     }
+}
+
+/// One ticket file. Free-form strings throughout: which statuses exist is project configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TicketRow {
+    /// `<project>/<path>`: what patches' `remove` lists carry. (`id` is only unique within a project.)
+    pub key: String,
+    pub project: ProjectId,
+    /// Relative to the project root, e.g. `.atelier/tickets/AT-036.md`.
+    pub path: String,
+    /// The filename stem, whatever the front matter says.
+    pub id: String,
+    pub title: String,
+    /// Verbatim and trimmed; `""` when the ticket has none.
+    pub status: String,
+    pub size: String,
+    pub milestone: String,
+    pub area: String,
+    pub depends: Vec<String>,
+    /// `- [x]` items and all checklist items in the body.
+    pub checks_done: u32,
+    pub checks_total: u32,
+    /// Something the file got wrong (bad front matter, id mismatch); shown as a quiet warning.
+    #[ts(optional)]
+    pub problem: Option<String>,
+    #[ts(type = "number")]
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

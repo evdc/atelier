@@ -1733,6 +1733,71 @@
   content-visibility: auto;
   contain-intrinsic-size: auto 84px;
 }
+.bd-card {
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.bd-card:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 1px;
+}
+.bd-card[data-drag] {
+  opacity: 0.4;
+}
+.bd-card.lifted {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  cursor: grabbing;
+  content-visibility: visible;
+  border-color: var(--ink);
+}
+.bd-cols.dragging {
+  cursor: grabbing;
+}
+.bd-col.over {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+.bd-fail {
+  margin: 0;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.bd-menu {
+  position: fixed;
+  z-index: 60;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  min-width: 176px;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+}
+.bd-menu .h {
+  padding: 4px 12px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.bd-menu button {
+  all: unset;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  padding: 9px 12px;
+  font: 13px var(--f-ui);
+  cursor: pointer;
+}
+.bd-menu button:hover,
+.bd-menu button:focus-visible {
+  background: var(--wash);
+}
 .bd-card header {
   display: flex;
   align-items: center;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BoardConfig } from "../gen/BoardConfig";
 import type { TicketRow } from "../gen/TicketRow";
-import { columns } from "./board";
+import { columns, overlay, settle, withMove, type Pending } from "./board";
 
 const config: BoardConfig = {
   statuses: ["open", "in-progress", "review", "qa", "done"],
@@ -45,5 +45,50 @@ describe("columns", () => {
   it("never hides a ticket, even with no columns", () => {
     const cols = columns({ statuses: [], columns: [] }, [t("A-1", ""), t("A-2", "x")]);
     expect(cols.map((c) => [c.title, ids(c)])).toEqual([["Other", ["A-1", "A-2"]]]);
+  });
+});
+
+describe("pending moves", () => {
+  const mv = (k: string, from: string, to: string): Pending => withMove(new Map(), `p/${k}`, { from, to });
+  const status = (rows: readonly TicketRow[], id: string) => rows.find((r) => r.id === id)!.status;
+
+  it("shows the target status while the row still has the old one", () => {
+    const rows = [t("A-1", "open"), t("A-2", "open")];
+    const out = overlay(rows, mv("A-1", "open", "in-progress"));
+    expect(status(out, "A-1")).toBe("in-progress");
+    expect(out[1]).toBe(rows[1]);
+    expect(rows[0]!.status).toBe("open");
+  });
+  it("is the identity with nothing pending", () => {
+    const rows = [t("A-1", "open")];
+    expect(overlay(rows, new Map())).toBe(rows);
+  });
+  it("is confirmed once the row reads the target, then cleared", () => {
+    const p = mv("A-1", "open", "done");
+    const rows = [t("A-1", "done")];
+    expect(status(overlay(rows, p), "A-1")).toBe("done");
+    expect(settle(p, rows).size).toBe(0);
+  });
+  it("keeps the entry while the row is unchanged", () => {
+    const p = mv("A-1", "open", "done");
+    expect(settle(p, [t("A-1", "open")])).toBe(p);
+  });
+  it("reverts when the move is removed (error)", () => {
+    const p = mv("A-1", "open", "done");
+    const rows = [t("A-1", "open")];
+    expect(status(overlay(rows, withMove(p, "p/A-1", null)), "A-1")).toBe("open");
+  });
+  it("lets a newer remote change win", () => {
+    const p = mv("A-1", "open", "done");
+    const rows = [t("A-1", "review")];
+    expect(status(overlay(rows, p), "A-1")).toBe("review");
+    expect(settle(p, rows).size).toBe(0);
+  });
+  it("forgets deleted tickets", () => {
+    expect(settle(mv("A-1", "open", "done"), []).size).toBe(0);
+  });
+  it("shows an overlaid ticket in the target column", () => {
+    const cols = columns(config, overlay([t("A-1", "open")], mv("A-1", "open", "in-progress")));
+    expect(cols.map(ids)).toEqual([[], ["A-1"], [], []]);
   });
 });

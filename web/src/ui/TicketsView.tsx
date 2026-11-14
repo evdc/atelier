@@ -1,7 +1,8 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, Show } from "solid-js";
 import type { BoardRow } from "../gen/BoardRow";
 import type { TicketRow } from "../gen/TicketRow";
-import { columns } from "../lib/board";
+import { columns, overlay, settle, withMove, type Pending } from "../lib/board";
+import { createDrag } from "../lib/drag";
 import { serverConfig } from "../lib/conn";
 import { canOpenIn, openIn } from "../lib/openin";
 import { href, NARROW } from "../lib/router";
@@ -9,6 +10,7 @@ import { createView } from "../lib/view";
 import { setTicketCount } from "../lib/tickets";
 import { useApp } from "./context";
 import { Column } from "./board/Column";
+import { MoveMenu } from "./board/MoveMenu";
 
 /** The project's ticket board (read-only). Watches `tickets` and `board` only while open. */
 export function TicketsView(props: { project: string }) {
@@ -17,7 +19,46 @@ export function TicketsView(props: { project: string }) {
   const tickets = createView<TicketRow>(conn, "tickets", props.project, () => 0, "key");
   const board = createView<BoardRow>(conn, "board", props.project, () => 0);
   const row = () => board.list()[0];
-  const cols = createMemo(() => (row() ? columns(row()!.config, tickets.list()) : []));
+  const [pending, setPending] = createSignal<Pending>(new Map());
+  const cols = createMemo(() => (row() ? columns(row()!.config, overlay(tickets.list(), pending())) : []));
+  // Moves the rows have caught up with are done; settle returns the same map when nothing changed.
+  createEffect(() => {
+    const rows = tickets.list();
+    setPending((p) => settle(p, rows));
+  });
+
+  // Optimistic move: show it now, ask the server, and snap back with its message if it refuses.
+  const [fail, setFail] = createSignal("");
+  let failTimer = 0;
+  onCleanup(() => clearTimeout(failTimer));
+  const move = (key: string, to: string) => {
+    const t = tickets.get(key);
+    if (!t || t.status === to || pending().has(key)) return;
+    setPending((p) => withMove(p, key, { from: t.status, to }));
+    conn
+      .call("ticket.update", { project: props.project, ticket: t.id, status: to, expect: t.status })
+      .catch((e: unknown) => {
+        setPending((p) => withMove(p, key, null));
+        setFail(e instanceof Error ? e.message : String(e));
+        clearTimeout(failTimer);
+        failTimer = window.setTimeout(() => setFail(""), 6000);
+      });
+  };
+
+  const [menu, setMenu] = createSignal<{ key: string; card: HTMLElement; at: DOMRect } | null>(null);
+  const openMenu = (key: string, card: HTMLElement) => setMenu({ key, card, at: card.getBoundingClientRect() });
+  const closeMenu = () => {
+    menu()?.card.focus({ preventScroll: true });
+    setMenu(null);
+  };
+  const menuFrom = () => cols().find((c) => c.tickets.some((t) => t.key === menu()?.key))?.title ?? "";
+  const onKeyDown = (e: KeyboardEvent) => {
+    const el = e.target as HTMLElement;
+    if (!el.classList.contains("bd-card") || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    openMenu(el.dataset.key!, el);
+  };
+
   const ready = () => tickets.ready() && board.ready();
 
   // The sidebar shows the count; it has no watch of its own.
@@ -46,6 +87,13 @@ export function TicketsView(props: { project: string }) {
   const onScroll = () => scroller && setAt(Math.round(scroller.scrollLeft / Math.max(1, scroller.clientWidth)));
   const jump = (i: number) => scroller?.children[i]?.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
 
+  const onDown = createDrag({
+    scroller: () => scroller,
+    menuOnHold: narrow,
+    onDrop: (key, status) => move(key, status),
+    onMenu: openMenu,
+  });
+
   const open = () => {
     const p = project();
     return p && canOpenIn(serverConfig()?.url ?? "")
@@ -66,6 +114,9 @@ export function TicketsView(props: { project: string }) {
           <For each={row()!.problems}>{(p) => <li>{p}</li>}</For>
         </ul>
       </Show>
+      <Show when={fail()}>
+        <p class="bd-fail err" role="alert">{fail()}</p>
+      </Show>
       <Show
         when={!ready() || tickets.list().length}
         fallback={
@@ -85,13 +136,28 @@ export function TicketsView(props: { project: string }) {
             </For>
           </nav>
         </Show>
-        <div class="bd-cols" ref={scroller} onScroll={onScroll}>
+        <div class="bd-cols" ref={scroller} onScroll={onScroll} onPointerDown={onDown} onKeyDown={onKeyDown}>
           {/* Index, not For: `columns()` builds fresh objects on every change, and Index keeps each
               column's DOM, so only the cards that moved re-render. */}
           <Index each={cols()}>
             {(c) => <Column col={c} collapsed={shut(c().title, c().collapsed)} onToggle={() => flip(c().title)} onOpen={open()} />}
           </Index>
         </div>
+      </Show>
+      <Show when={menu()}>
+        {(m) => (
+          <MoveMenu
+            cols={cols()}
+            current={menuFrom()}
+            at={m().at}
+            onPick={(status) => {
+              const k = m().key;
+              closeMenu();
+              move(k, status);
+            }}
+            onClose={closeMenu}
+          />
+        )}
       </Show>
     </div>
   );

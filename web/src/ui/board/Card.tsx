@@ -7,7 +7,7 @@ export function Card(props: { t: TicketRow; showStatus: boolean; onOpen?: () => 
   const t = () => props.t;
   const meta = () => [t().size, t().area].filter(Boolean).join(" · ");
   return (
-    <article class="bd-card" data-key={t().key}>
+    <article class="bd-card" data-key={t().key} tabindex="0">
       <header>
         <span class="id">{t().id}</span>
         <Show when={t().problem}>

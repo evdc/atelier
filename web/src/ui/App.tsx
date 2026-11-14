@@ -13,6 +13,7 @@ import { Ctx } from "./context";
 import { AllSessionsView, NewAnywhereView, WaitingView } from "./Inbox";
 import { ProjectsView } from "./ProjectsView";
 import { SessionsView } from "./SessionsView";
+import { TicketsView } from "./TicketsView";
 import { Footer } from "./Footer";
 import { Sidebar } from "./Sidebar";
 import { Tabs } from "./Tabs";
@@ -48,6 +49,11 @@ export function App(props: { conn: Conn }) {
     return r.name === "sessions" ? r : null;
   };
 
+  const ticketsRoute = () => {
+    const r = route();
+    return r.name === "tickets" ? r : null;
+  };
+
   return (
     <Ctx.Provider value={{ conn: props.conn, projects, sessions, usage }}>
       <div class="app" classList={{ "side-off": !sidebarOpen() }}>
@@ -59,6 +65,13 @@ export function App(props: { conn: Conn }) {
                 // Keyed by project: switching projects builds a fresh view.
                 <Show when={r().project} keyed>
                   {(project) => <SessionsView project={project} session={r().session} creating={!!r().creating} />}
+                </Show>
+              )}
+            </Match>
+            <Match when={ticketsRoute()}>
+              {(r) => (
+                <Show when={r().project} keyed>
+                  {(project) => <TicketsView project={project} />}
                 </Show>
               )}
             </Match>

@@ -1629,3 +1629,188 @@
 .send-line .arrow {
   color: var(--gold);
 }
+
+/* ── tickets board ─────────────────────────────────────────────────────── */
+.bd {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.bd .back,
+.bd-seg {
+  display: none;
+}
+.bd-note {
+  margin: 0;
+  padding: 8px 16px 8px 30px;
+  border-bottom: 1px solid var(--line);
+  color: var(--gold);
+  font-size: 12.5px;
+}
+.bd-cols {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.bd-col {
+  flex: 0 0 272px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  background: var(--paper-2);
+}
+.bd-col.shut {
+  flex-basis: 40px;
+}
+.bd-col > header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 9px 10px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.bd-col h2 {
+  font-size: 17px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bd-col .n {
+  font: 11px var(--f-mono);
+  color: var(--ink-3);
+}
+.bd-col .fold {
+  padding: 0 6px;
+  align-self: center;
+}
+.bd-col .strip {
+  all: unset;
+  flex: 1;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+}
+.bd-col .strip:hover {
+  background: var(--wash);
+}
+.bd-col .strip:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: -2px;
+}
+.bd-col .strip .t {
+  writing-mode: vertical-rl;
+  font: 16px var(--f-display);
+  white-space: nowrap;
+}
+.bd-col .cards {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bd-card {
+  border: 1px solid var(--line);
+  background: var(--card);
+  padding: 8px 10px 9px;
+  display: grid;
+  gap: 4px;
+  /* off-screen cards skip layout and paint */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 84px;
+}
+.bd-card header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bd-card .id,
+.bd-card .mono {
+  font: 11px var(--f-mono);
+  color: var(--ink-3);
+}
+.bd-card .mark {
+  color: var(--gold);
+  font-size: 10px;
+}
+.bd-card .tag {
+  margin-left: auto;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  padding: 0 5px;
+}
+.bd-card h3 {
+  font: 500 13.5px/1.35 var(--f-ui);
+}
+.bd-card .meta,
+.bd-card .deps {
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.bd-card .open {
+  justify-self: start;
+  padding: 0;
+}
+
+@media (max-width: 760px) {
+  .bd .back {
+    display: inline-flex;
+  }
+  .bd-seg {
+    display: flex;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--line);
+  }
+  .bd-seg button {
+    all: unset;
+    flex: 0 0 auto;
+    padding: 10px 14px;
+    font: 500 13px var(--f-ui);
+    color: var(--ink-3);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .bd-seg button.on {
+    color: var(--ink);
+    box-shadow: inset 0 -2px 0 var(--ink);
+  }
+  .bd-seg span {
+    font: 10.5px var(--f-mono);
+  }
+  .bd-cols {
+    padding: 0;
+    gap: 0;
+    scroll-snap-type: x mandatory;
+  }
+  .bd-col {
+    flex: 0 0 100%;
+    scroll-snap-align: start;
+    border: 0;
+    border-right: 1px solid var(--line);
+  }
+  .bd-col > header,
+  .bd-col .fold {
+    display: none;
+  }
+}

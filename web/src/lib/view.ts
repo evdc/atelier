@@ -14,11 +14,14 @@ export interface View<Row> {
 }
 
 /** Must be called inside a reactive owner (component or createRoot). */
-export function createView<Row extends { id: string }>(
+export function createView<Row extends { id: string; key?: string }>(
   conn: Conn,
   view: ViewName,
   scope: string | null,
   order: (a: Row, b: Row) => number,
+  /** The property rows are identified by, and that patches' `remove` lists carry. Tickets use `key`
+   *  (`id` is only unique within a project). */
+  idKey: "id" | "key" = "id",
 ): View<Row> {
   const [rows, setRows] = createStore<Record<string, Row>>({});
   const [ready, setReady] = createSignal(false);
@@ -26,13 +29,13 @@ export function createView<Row extends { id: string }>(
   const stop = conn.watch<Row>(view, scope, {
     snapshot(all) {
       const next: Record<string, Row> = {};
-      for (const r of all) next[r.id] = r;
+      for (const r of all) next[r[idKey] as string] = r;
       // reconcile keeps object identity for unchanged rows → no re-render.
-      setRows(reconcile(next, { key: "id" }));
+      setRows(reconcile(next, { key: idKey }));
       setReady(true);
     },
     patch(upsert, remove) {
-      for (const r of upsert) setRows(r.id, reconcile(r));
+      for (const r of upsert) setRows(r[idKey] as string, reconcile(r));
       if (remove.length) setRows(produce((d) => remove.forEach((id) => delete d[id])));
     },
   });

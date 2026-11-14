@@ -71,6 +71,63 @@ pub fn parse_ticket(stem: &str, text: &str) -> Ticket {
     }
 }
 
+/// `text` with its front matter's `status:` line set to `status`, and nothing else touched: every other line,
+/// its line ending, and a BOM stay as they were, so the change is one line in a diff. Inserts the line after
+/// `title:` (or at the end of the front matter) when there isn't one. Refused without front matter, since
+/// there's nowhere to put the status.
+pub fn set_status(text: &str, status: &str) -> Result<String, String> {
+    let (bom, body) = match text.strip_prefix('\u{feff}') {
+        Some(rest) => ("\u{feff}", rest),
+        None => ("", text),
+    };
+    let mut lines: Vec<String> = body.split_inclusive('\n').map(str::to_owned).collect();
+    if lines.first().map(|l| trim_eol(l)) != Some("---") {
+        return Err("the ticket has no front matter to hold `status`".into());
+    }
+    let close = (1..lines.len())
+        .find(|&i| trim_eol(&lines[i]).trim_end() == "---")
+        .ok_or("the front matter is not closed with `---`")?;
+    // The file's own line ending, for a line we insert.
+    let eol = if lines[0].ends_with("\r\n") { "\r\n" } else { "\n" };
+
+    let (mut status_at, mut title_at) = (None, None);
+    for (i, line) in lines.iter().enumerate().take(close).skip(1) {
+        if let Some((key, _)) = trim_eol(line).split_once(':') {
+            match key.trim() {
+                "status" => status_at = Some(i),
+                "title" => title_at = title_at.or(Some(i)),
+                _ => {}
+            }
+        }
+    }
+    let value = render_scalar(status);
+    match status_at {
+        Some(i) => {
+            // Keep the line's indentation, key and line ending; replace only the value.
+            let line = trim_eol(&lines[i]).to_owned();
+            let key = &line[..line.find(':').unwrap_or(0)];
+            let tail = lines[i][line.len()..].to_owned();
+            lines[i] = format!("{key}: {value}{tail}");
+        }
+        None => {
+            let at = title_at.map_or(close, |t| t + 1);
+            lines.insert(at, format!("status: {value}{eol}"));
+        }
+    }
+    Ok(format!("{bom}{}", lines.concat()))
+}
+
+/// A status as a scalar the front-matter parser reads back unchanged: bare when that's safe, double-quoted
+/// otherwise.
+fn render_scalar(v: &str) -> String {
+    let bare = !v.is_empty() && v == v.trim() && !v.contains(|c: char| "\"'[]#:,\\".contains(c));
+    if bare { v.to_owned() } else { format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\"")) }
+}
+
+fn trim_eol(l: &str) -> &str {
+    l.strip_suffix('\n').map_or(l, |l| l.strip_suffix('\r').unwrap_or(l))
+}
+
 fn heading(body: &str) -> Option<&str> {
     body.lines().find_map(|l| l.strip_prefix("# ")).map(str::trim).filter(|t| !t.is_empty())
 }
@@ -316,6 +373,76 @@ mod tests {
         ] {
             assert_eq!(ticket_stem(p), None, "{p}");
         }
+    }
+
+    /// Lines of `a` and `b` that differ, as (index, line of `a`, line of `b`). Panics if the counts differ.
+    fn changed_lines<'a>(a: &'a str, b: &'a str) -> Vec<(usize, &'a str, &'a str)> {
+        let (x, y): (Vec<_>, Vec<_>) = (a.split_inclusive('\n').collect(), b.split_inclusive('\n').collect());
+        assert_eq!(x.len(), y.len(), "line count changed");
+        x.into_iter().zip(y).enumerate().filter(|(_, (p, q))| p != q).map(|(i, (p, q))| (i, p, q)).collect()
+    }
+
+    #[test]
+    fn set_status_changes_only_the_status_line_of_every_real_ticket() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../.atelier/tickets");
+        let mut n = 0;
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            let name = p.file_name().unwrap().to_str().unwrap().to_owned();
+            let rel = format!(".atelier/tickets/{name}");
+            let Some(stem) = ticket_stem(&rel) else { continue };
+            let text = std::fs::read_to_string(&p).unwrap();
+            let before = parse_ticket(stem, &text);
+
+            // Writing the status it already has changes nothing.
+            assert_eq!(set_status(&text, &before.status).unwrap(), text, "{stem}");
+
+            let moved = set_status(&text, "zz-moved").unwrap();
+            let changed = changed_lines(&text, &moved);
+            assert_eq!(changed.len(), 1, "{stem}: {changed:?}");
+            assert!(changed[0].1.trim_start().starts_with("status:"), "{stem}: {changed:?}");
+            let after = parse_ticket(stem, &moved);
+            assert_eq!(after.status, "zz-moved");
+            assert_eq!(
+                (after.title, after.checks_total, after.depends, after.problem),
+                (before.title, before.checks_total, before.depends, before.problem),
+                "{stem}"
+            );
+            n += 1;
+        }
+        assert!(n > 30);
+    }
+
+    #[test]
+    fn set_status_inserts_when_missing_and_keeps_line_endings_and_bom() {
+        assert_eq!(
+            set_status("---\nid: X\ntitle: \"T\"\nsize: M\n---\nbody", "open").unwrap(),
+            "---\nid: X\ntitle: \"T\"\nstatus: open\nsize: M\n---\nbody"
+        );
+        assert_eq!(set_status("---\nid: X\n---\n", "open").unwrap(), "---\nid: X\nstatus: open\n---\n");
+        assert_eq!(
+            set_status("---\r\nid: X\r\ntitle: T\r\n---\r\nbody\r\n", "open").unwrap(),
+            "---\r\nid: X\r\ntitle: T\r\nstatus: open\r\n---\r\nbody\r\n"
+        );
+        assert_eq!(
+            set_status("---\r\nid: X\r\nstatus: open\r\n---\r\nbody\r\n", "done").unwrap(),
+            "---\r\nid: X\r\nstatus: done\r\n---\r\nbody\r\n"
+        );
+        assert_eq!(set_status("\u{feff}---\nstatus: a\n---\n", "b").unwrap(), "\u{feff}---\nstatus: b\n---\n");
+    }
+
+    #[test]
+    fn set_status_quotes_values_the_parser_would_misread() {
+        for status in ["in: progress", "[x]", "a # b", "say \"hi\"", " padded "] {
+            let text = set_status("---\nid: X\nstatus: open\n---\n", status).unwrap();
+            assert_eq!(parse_ticket("X", &text).status, status.trim(), "{text}");
+        }
+    }
+
+    #[test]
+    fn set_status_refuses_text_without_a_usable_front_matter() {
+        assert!(set_status("# no front matter\n", "open").is_err());
+        assert!(set_status("---\nid: X\n", "open").is_err());
     }
 
     #[test]

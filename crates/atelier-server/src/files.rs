@@ -60,12 +60,67 @@ pub async fn ingest(app: &App, project: &ProjectId, rel_path: &str, actor: Actor
     ingest_in(app, project, &root, rel_path, actor).await
 }
 
-async fn ingest_in(app: &App, project: &ProjectId, root: &Path, rel: &str, actor: Actor) -> Result<Option<Arc<Event>>> {
+/// Rewrites `rel` (under `.atelier/`) from its current text, `None` if it doesn't exist, and logs the result.
+///
+/// `f` runs under the project's lock, so no other write or ingest of the project can interleave with the
+/// read-modify-write. The new text is written atomically and then ingested as `actor`, so the event lands now and
+/// the watcher's later notification is a no-op.
+pub async fn rewrite(
+    app: &App,
+    project: &ProjectId,
+    rel: &str,
+    actor: Actor,
+    f: impl FnOnce(Option<&str>) -> Result<String>,
+) -> Result<Option<Arc<Event>>> {
+    let root = root_of(app, project).await?;
+    check_rel(rel)?;
+    let _guard = app.file_locks.lock(project).await;
+    let abs = root.join(rel);
+    let current = match tokio::fs::read(&abs).await {
+        Ok(bytes) => Some(String::from_utf8(bytes).with_context(|| format!("{rel} is not UTF-8"))?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e).with_context(|| format!("reading {rel}")),
+    };
+    let next = f(current.as_deref())?;
+    write_atomic(&abs, next.as_bytes()).await.with_context(|| format!("writing {rel}"))?;
+    ingest_locked(app, project, &root, rel, actor).await
+}
+
+/// Temp file in the same directory, then rename: readers see the old file or the new one, never half of each.
+async fn write_atomic(abs: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let dir = abs.parent().ok_or_else(|| std::io::Error::other("no parent directory"))?;
+    tokio::fs::create_dir_all(dir).await?;
+    let name = abs.file_name().unwrap_or_default().to_string_lossy();
+    // Dot-prefixed and `.tmp`-suffixed, so the watcher never mirrors it.
+    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    tokio::fs::write(&tmp, bytes).await?;
+    tokio::fs::rename(&tmp, abs).await.inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
+fn check_rel(rel: &str) -> Result<()> {
     anyhow::ensure!(
         rel.strip_prefix(DIR).is_some_and(|r| r.starts_with('/')) && !rel.split('/').any(|s| s == ".."),
         "{rel} is not under {DIR}/"
     );
+    Ok(())
+}
+
+async fn ingest_in(app: &App, project: &ProjectId, root: &Path, rel: &str, actor: Actor) -> Result<Option<Arc<Event>>> {
+    check_rel(rel)?;
     let _guard = app.file_locks.lock(project).await;
+    ingest_locked(app, project, root, rel, actor).await
+}
+
+/// [`ingest_in`] for a caller already holding the project's lock.
+async fn ingest_locked(
+    app: &App,
+    project: &ProjectId,
+    root: &Path,
+    rel: &str,
+    actor: Actor,
+) -> Result<Option<Arc<Event>>> {
     let text = read_text(&root.join(rel), rel).await;
     let (id, path) = (project.0.clone(), rel.to_owned());
     let known = app.store.read(move |c| views::files::hash_of(c, &id, &path)).await?;

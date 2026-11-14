@@ -16,11 +16,11 @@ use atelier_core::domain::{
     AgentKind, AgentMessage, MessageMode, ProjectAdded, ProjectRemoved, SessionArchived, SessionCreated,
     SessionRenamed, SessionUnarchived, WorkspaceMode, WorkspaceRemoved,
 };
-use atelier_core::{Actor, NewEvent, Seq, SessionId, stream};
-use atelier_proto::{Archived, Call, ProjectRow, SessionRow, SessionStatus};
+use atelier_core::{Actor, NewEvent, ProjectId, Seq, SessionId, stream};
+use atelier_proto::{Archived, BoardConfig, Call, ProjectRow, SessionRow, SessionStatus};
 use serde_json::{Value, json};
 
-use crate::{App, browse, views, workspace};
+use crate::{App, board, browse, files, views, workspace};
 
 const MAX_TITLE_CHARS: usize = 200;
 const MAX_IMAGES: usize = 8;
@@ -275,7 +275,58 @@ pub async fn handle(app: &App, actor: Actor, cause: Option<Seq>, call: Call) -> 
         }
         Call::FsList { path, hidden } => Ok(serde_json::to_value(browse::list(path, hidden.unwrap_or(false)).await?)?),
         Call::FsSuggest {} => Ok(serde_json::to_value(browse::suggest().await?)?),
+        Call::TicketUpdate { project, ticket, status, expect } => {
+            ticket_update(app, &actor, &project, &ticket, &status, expect.as_deref()).await?;
+            Ok(Value::Null)
+        }
+        Call::BoardUpdate { project, config } => {
+            board_update(app, &actor, &project, &config).await?;
+            Ok(Value::Null)
+        }
     }
+}
+
+/// Sets a ticket's `status:` line, if the file still says `expect` (when given). The file is the truth: the
+/// tickets view changes when the `file.changed` lands.
+async fn ticket_update(
+    app: &App,
+    actor: &Actor,
+    project: &ProjectId,
+    ticket: &str,
+    status: &str,
+    expect: Option<&str>,
+) -> Result<()> {
+    let status = status.trim();
+    if status.is_empty() {
+        bail!("the status can't be empty");
+    }
+    // Anything that would break the one-line `status:` the parser reads back.
+    if status.contains(['\n', '\r']) || status.starts_with(':') {
+        bail!("{status:?} isn't a status");
+    }
+    let rel = format!(".atelier/tickets/{ticket}.md");
+    let stem = views::tickets::ticket_stem(&rel).with_context(|| format!("no ticket {ticket}"))?;
+    files::rewrite(app, project, &rel, actor.clone(), |text| {
+        let text = text.with_context(|| format!("no ticket {stem}"))?;
+        let current = views::tickets::parse_ticket(stem, text).status;
+        if expect.is_some_and(|e| e.trim() != current) {
+            bail!("{stem} is now *{current}* (changed elsewhere)");
+        }
+        views::tickets::set_status(text, status).map_err(anyhow::Error::msg)
+    })
+    .await?;
+    Ok(())
+}
+
+/// Writes a project's board config, if it's valid as it stands (no fixes needed).
+async fn board_update(app: &App, actor: &Actor, project: &ProjectId, config: &BoardConfig) -> Result<()> {
+    let (_, problems) = board::effective(Some(&serde_json::to_string(config)?));
+    if !problems.is_empty() {
+        bail!("{}", problems.join("; "));
+    }
+    files::rewrite(app, project, board::PATH, actor.clone(), |existing| Ok(board::merged_text(existing, config)))
+        .await?;
+    Ok(())
 }
 
 /// The session a new session starts from: `from` itself, or the owner of the worktree when `from` is a reader.

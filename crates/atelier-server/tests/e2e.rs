@@ -1489,3 +1489,86 @@ async fn board_config_is_watched_from_its_file() {
     assert_eq!(patch["upsert"][0]["config"]["statuses"], json!(["open", "in-progress", "done"]));
     app.supervisor.shutdown().await;
 }
+
+#[tokio::test]
+async fn ticket_update_writes_the_file_and_refuses_a_stale_expect() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let tickets = repo.join(".atelier/tickets");
+    std::fs::create_dir_all(&tickets).unwrap();
+    let ticket = tickets.join("AT-1.md");
+    let open = "---\nid: AT-1\ntitle: \"One\"\nstatus: open\n---\n- [ ] a\n";
+    let review = open.replace("status: open", "status: review");
+    std::fs::write(&ticket, open).unwrap();
+
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    let pid = project.as_str().unwrap().to_owned();
+    c.send(json!({"t": "watch", "id": 2, "view": "tickets", "scope": project})).await;
+    c.until(|m| m["watch"] == 2 && m.to_string().contains("AT-1")).await;
+
+    let r =
+        c.rpc("ticket.update", json!({"project": pid, "ticket": "AT-1", "status": "review", "expect": "open"})).await;
+    assert_eq!(r, Value::Null);
+    assert_eq!(std::fs::read_to_string(&ticket).unwrap(), review);
+    c.until(|m| m["watch"] == 2 && m.to_string().contains("\"review\"")).await;
+
+    // Someone (an editor, an agent) moved it on since the client looked: refused, file untouched.
+    let err =
+        rpc_err(&mut c, "ticket.update", json!({"project": pid, "ticket": "AT-1", "status": "done", "expect": "open"}))
+            .await;
+    assert!(err.contains("AT-1 is now *review* (changed elsewhere)"), "{err}");
+    assert_eq!(std::fs::read_to_string(&ticket).unwrap(), review);
+
+    // One event for the write, attributed to the person; the watcher's notification adds nothing.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let evs = events_where(&app, &format!("p/{pid}"), |_| true).await;
+    let changed: Vec<_> = evs.iter().filter(|e| e.kind == "file.changed").collect();
+    assert_eq!(changed.len(), 2, "{changed:?}");
+    assert_eq!(changed.iter().filter(|e| e.actor == "user").count(), 1);
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn board_update_writes_the_file_and_refuses_problems() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    let pid = project.as_str().unwrap().to_owned();
+    c.send(json!({"t": "watch", "id": 2, "view": "board", "scope": project})).await;
+    c.until(|m| m["t"] == "snapshot" && m["watch"] == 2).await;
+
+    let config = json!({"statuses": ["open", "done"], "columns": [
+        {"title": "To do", "statuses": ["open"]}, {"title": "Done", "statuses": ["done"], "collapsed": true}]});
+    let r = c.rpc("board.update", json!({"project": pid, "config": config})).await;
+    assert_eq!(r, Value::Null);
+    let patch = c.until(|m| m["t"] == "patch" && m["watch"] == 2 && m["upsert"][0]["from_file"] == true).await;
+    assert_eq!(patch["upsert"][0]["config"]["columns"][1]["collapsed"], true);
+    assert_eq!(patch["upsert"][0]["problems"], json!([]));
+
+    // A column with no statuses: refused, and the file keeps what it had.
+    let bad = json!({"statuses": ["open"], "columns": [{"title": "Empty", "statuses": []}]});
+    let err = rpc_err(&mut c, "board.update", json!({"project": pid, "config": bad})).await;
+    assert!(err.contains("column `Empty` has no statuses; dropped"), "{err}");
+    let on_disk: Value =
+        serde_json::from_str(&std::fs::read_to_string(repo.join(".atelier/board.json")).unwrap()).unwrap();
+    assert_eq!(on_disk["statuses"], json!(["open", "done"]));
+
+    // A key this server doesn't know, written by a newer client, survives an older client's update.
+    let newer = json!({"statuses": ["open", "done"], "theme": "dark", "columns": [
+        {"title": "To do", "statuses": ["open"], "colour": "gold"}, {"title": "Done", "statuses": ["done"]}]});
+    std::fs::write(repo.join(".atelier/board.json"), newer.to_string()).unwrap();
+    let plain = json!({"statuses": ["open", "done"], "columns": [
+        {"title": "To do", "statuses": ["open"], "collapsed": true}, {"title": "Done", "statuses": ["done"]}]});
+    c.rpc("board.update", json!({"project": pid, "config": plain})).await;
+    let on_disk: Value =
+        serde_json::from_str(&std::fs::read_to_string(repo.join(".atelier/board.json")).unwrap()).unwrap();
+    assert_eq!(on_disk["theme"], "dark");
+    assert_eq!(on_disk["columns"][0]["colour"], "gold");
+    assert_eq!(on_disk["columns"][0]["collapsed"], true);
+    app.supervisor.shutdown().await;
+}

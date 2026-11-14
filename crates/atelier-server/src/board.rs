@@ -98,6 +98,38 @@ struct File {
     extra: Map<String, Value>,
 }
 
+/// The file's text after writing `config` over `existing`: the file's keys that `config` doesn't name (top level
+/// and per column, where columns are matched by title) are kept, so a newer client's additions survive an older
+/// client's rewrite. Unparsable `existing` is replaced; its content is still in the log as `file.changed`.
+pub fn merged_text(existing: Option<&str>, config: &BoardConfig) -> String {
+    let mut out = match existing.and_then(|t| serde_json::from_str::<Value>(t).ok()) {
+        Some(Value::Object(m)) => m,
+        _ => Map::new(),
+    };
+    let old_columns: Vec<Map<String, Value>> = out
+        .get("columns")
+        .and_then(Value::as_array)
+        .map(|cols| cols.iter().filter_map(|c| c.as_object().cloned()).collect())
+        .unwrap_or_default();
+    let columns = config.columns.iter().map(|col| {
+        let mut m = old_columns
+            .iter()
+            .find(|o| o.get("title") == Some(&Value::from(col.title.as_str())))
+            .cloned()
+            .unwrap_or_default();
+        if let Value::Object(new) = serde_json::to_value(col).expect("columns serialize") {
+            m.extend(new);
+        }
+        Value::Object(m)
+    });
+    out.insert("statuses".into(), serde_json::to_value(&config.statuses).expect("statuses serialize"));
+    out.insert("columns".into(), Value::Array(columns.collect()));
+    out.extend(config.extra.clone());
+    let mut text = serde_json::to_string_pretty(&Value::Object(out)).expect("board config serializes");
+    text.push('\n');
+    text
+}
+
 /// `items` without repeats, reporting each repeat (in order) to `on_repeat`.
 fn unique(items: Vec<String>, mut on_repeat: impl FnMut(&str)) -> Vec<String> {
     let mut seen = HashSet::new();
@@ -213,6 +245,35 @@ mod tests {
         let (c, problems) = effective(Some(r#"{"columns": [{"title": "Doing", "statuses": ["in-progress"]}]}"#));
         assert_eq!(c.statuses, ["in-progress"]);
         assert!(problems.is_empty());
+    }
+
+    #[test]
+    fn merged_text_keeps_keys_the_config_does_not_name() {
+        let existing = r#"{"statuses": ["open"], "theme": "dark", "columns": [
+            {"title": "A", "statuses": ["open"], "colour": "gold"}]}"#;
+        let (config, _) = effective(Some(
+            r#"{"statuses": ["open", "done"], "columns": [
+                {"title": "A", "statuses": ["open"]}, {"title": "B", "statuses": ["done"], "collapsed": true}]}"#,
+        ));
+        let text = merged_text(Some(existing), &config);
+        assert!(text.ends_with("}\n"));
+        let out: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(out["theme"], "dark");
+        assert_eq!(out["statuses"], serde_json::json!(["open", "done"]));
+        assert_eq!(out["columns"][0]["colour"], "gold");
+        assert_eq!(out["columns"][1]["collapsed"], true);
+        let (again, problems) = effective(Some(&text));
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(serde_json::to_value(&again).unwrap(), out);
+    }
+
+    #[test]
+    fn merged_text_without_a_file_or_with_a_broken_one_is_just_the_config() {
+        let config = defaults();
+        for existing in [None, Some("{ not json")] {
+            let text = merged_text(existing, &config);
+            assert_eq!(effective(Some(&text)).0.statuses, config.statuses);
+        }
     }
 
     #[test]

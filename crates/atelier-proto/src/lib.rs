@@ -161,6 +161,23 @@ pub enum Call {
     /// already copied) into the log. Only runs when asked. Result: [`Imported`].
     #[serde(rename = "project.import")]
     ProjectImport { project: ProjectId },
+    /// Set a ticket's `status:` in `.atelier/tickets/<ticket>.md` (`ticket` is the id, the filename stem).
+    /// `expect` is the status the client last saw: if the file says otherwise the call is refused and
+    /// nothing is written. Result: none.
+    #[serde(rename = "ticket.update")]
+    TicketUpdate {
+        project: ProjectId,
+        ticket: String,
+        status: String,
+        #[serde(default)]
+        #[ts(optional)]
+        expect: Option<String>,
+    },
+    /// Replace a project's board config (`.atelier/board.json`). Refused if it has problems, so the UI
+    /// shows them rather than writing a half-fixed file. Keys the file has and `config` doesn't are kept.
+    /// Result: none.
+    #[serde(rename = "board.update")]
+    BoardUpdate { project: ProjectId, config: BoardConfig },
     /// Directories inside `path` on the server (default: its user's home), for
     /// the add-project picker. Result: [`DirListing`].
     #[serde(rename = "fs.list")]
@@ -181,9 +198,12 @@ pub enum Call {
 
 impl Call {
     /// Whether an agent (through the MCP server) may make this call. Removing projects and browsing the
-    /// server's filesystem are for the person at the keyboard.
+    /// server's filesystem are for the person at the keyboard. An agent edits its board's file directly.
     pub fn agent_allowed(&self) -> bool {
-        !matches!(self, Call::ProjectRemove { .. } | Call::FsList { .. } | Call::FsSuggest {})
+        !matches!(
+            self,
+            Call::ProjectRemove { .. } | Call::FsList { .. } | Call::FsSuggest {} | Call::BoardUpdate { .. }
+        )
     }
 }
 

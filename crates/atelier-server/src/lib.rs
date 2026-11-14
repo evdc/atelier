@@ -8,6 +8,7 @@
 //! ```
 
 pub mod autotitle;
+pub mod board;
 pub mod browse;
 pub mod config;
 pub mod files;

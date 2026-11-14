@@ -352,6 +352,8 @@ pub enum ViewName {
     Usage,
     /// Rows: [`TicketRow`]. Scope: project id.
     Tickets,
+    /// Rows: [`BoardRow`], one per project (defaults if it has no `board.json`). Scope: project id.
+    Board,
 }
 
 impl ViewName {
@@ -361,6 +363,7 @@ impl ViewName {
             ViewName::Sessions => "sessions",
             ViewName::Usage => "usage",
             ViewName::Tickets => "tickets",
+            ViewName::Board => "board",
         }
     }
 }
@@ -494,4 +497,47 @@ pub struct LimitWindow {
     /// Unix milliseconds when the window resets, when reported.
     #[ts(type = "number | null")]
     pub resets_at: Option<i64>,
+}
+
+/// A project's board config (`.atelier/board.json`), effective: the file's contents once validated, or defaults.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BoardConfig {
+    /// Every known status, in the order a status picker offers them.
+    #[serde(default)]
+    pub statuses: Vec<String>,
+    #[serde(default)]
+    pub columns: Vec<BoardColumn>,
+    /// Keys this version doesn't know, kept so a rewrite doesn't drop a newer client's additions.
+    #[serde(flatten)]
+    #[ts(skip)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BoardColumn {
+    pub title: String,
+    /// Tickets whose status is in here are shown in this column. Dropping a ticket here sets the first one.
+    #[serde(default)]
+    pub statuses: Vec<String>,
+    /// Rendered narrow by default.
+    #[serde(default)]
+    pub collapsed: bool,
+    #[serde(flatten)]
+    #[ts(skip)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// Rows: one per project. The view answers for every project, with defaults where there is no file.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BoardRow {
+    /// The project (the row key and the watch scope).
+    pub id: ProjectId,
+    pub config: BoardConfig,
+    /// What was fixed or ignored while validating the file, one line each. Empty for defaults.
+    pub problems: Vec<String>,
+    /// Whether `.atelier/board.json` exists in the project.
+    pub from_file: bool,
 }

@@ -1452,3 +1452,40 @@ async fn tickets_view_follows_files_on_disk() {
     c.until(|m| has_row(m, "in progress")).await;
     app.supervisor.shutdown().await;
 }
+
+#[tokio::test]
+async fn board_config_is_watched_from_its_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(repo.join(".atelier")).unwrap();
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    let project = project.as_str().unwrap();
+
+    // No file: the defaults, one row for the project.
+    c.send(json!({"t": "watch", "id": 2, "view": "board", "scope": project})).await;
+    let snap = c.until(|m| m["t"] == "snapshot" && m["watch"] == 2).await;
+    let rows = snap["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["from_file"], false);
+    assert_eq!(rows[0]["config"]["statuses"], json!(["open", "in-progress", "done"]));
+    assert_eq!(rows[0]["config"]["columns"].as_array().unwrap().len(), 3);
+
+    // Written: a patch with the new columns.
+    let text = r#"{"statuses": ["open", "review"], "columns": [
+        {"title": "To do", "statuses": ["open"]}, {"title": "Review", "statuses": ["review"], "collapsed": true}]}"#;
+    std::fs::write(repo.join(".atelier/board.json"), text).unwrap();
+    let patch = c.until(|m| m["t"] == "patch" && m["watch"] == 2).await;
+    let row = &patch["upsert"][0];
+    assert_eq!((row["id"].as_str(), row["from_file"].as_bool()), (Some(project), Some(true)));
+    assert_eq!(row["config"]["columns"][1]["title"], "Review");
+    assert_eq!(row["config"]["columns"][1]["collapsed"], true);
+    assert_eq!(row["problems"], json!([]));
+
+    // Deleted: back to the defaults.
+    std::fs::remove_file(repo.join(".atelier/board.json")).unwrap();
+    let patch = c.until(|m| m["t"] == "patch" && m["watch"] == 2 && m["upsert"][0]["from_file"] == false).await;
+    assert_eq!(patch["upsert"][0]["config"]["statuses"], json!(["open", "in-progress", "done"]));
+    app.supervisor.shutdown().await;
+}

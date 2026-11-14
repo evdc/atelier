@@ -10,6 +10,7 @@ import { createView } from "../lib/view";
 import { setTicketCount } from "../lib/tickets";
 import { useApp } from "./context";
 import { Column } from "./board/Column";
+import { BoardEditor } from "./board/BoardEditor";
 import { MoveMenu } from "./board/MoveMenu";
 
 /** The project's ticket board (read-only). Watches `tickets` and `board` only while open. */
@@ -82,6 +83,8 @@ export function TicketsView(props: { project: string }) {
   onCleanup(() => mq.removeEventListener("change", onMq));
   const shut = (title: string, dflt: boolean) => !narrow() && dflt !== flipped().has(title);
 
+  const [editing, setEditing] = createSignal(false);
+
   let scroller: HTMLDivElement | undefined;
   const [at, setAt] = createSignal(0);
   const onScroll = () => scroller && setAt(Math.round(scroller.scrollLeft / Math.max(1, scroller.clientWidth)));
@@ -108,6 +111,9 @@ export function TicketsView(props: { project: string }) {
           ‹
         </a>
         <h2>{project()?.name ?? ""} · Tickets</h2>
+        <button class="btn quiet" disabled={!row()} onClick={() => setEditing(true)}>
+          Edit columns
+        </button>
       </header>
       <Show when={row()?.problems.length}>
         <ul class="bd-note">
@@ -158,6 +164,15 @@ export function TicketsView(props: { project: string }) {
             onClose={closeMenu}
           />
         )}
+      </Show>
+      <Show when={editing() && row()}>
+        <BoardEditor
+          project={props.project}
+          config={row()!.config}
+          tickets={tickets.list()}
+          onClose={() => setEditing(false)}
+          onSaved={() => setFlipped(new Set())}
+        />
       </Show>
     </div>
   );

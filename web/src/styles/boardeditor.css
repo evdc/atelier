@@ -1,0 +1,140 @@
+/* Board column editor: a side sheet, full screen on a phone. */
+.be-back {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+.be {
+  position: fixed;
+  z-index: 21;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(520px, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border-left: 1px solid var(--ink);
+}
+.be > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.be h3 {
+  flex: 1;
+  margin: 0;
+  font: 400 19px var(--f-display);
+}
+.be h4 {
+  margin: 0 0 6px;
+  font: 500 11.5px var(--f-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+.be-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+.be section {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+.be section > p {
+  margin: 0;
+  font-size: 12.5px;
+}
+.be-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: stretch;
+}
+.be-row .field {
+  flex: 1;
+  min-width: 0;
+}
+.be-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.be-col {
+  display: grid;
+  gap: 6px;
+  align-self: stretch;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.be-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.be-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px 1px 8px;
+  border: 1px solid var(--line);
+  font: 12px var(--f-mono);
+}
+.be-chip em {
+  font: italic 11px var(--f-ui);
+  color: var(--gold);
+}
+.be-chip button {
+  all: unset;
+  cursor: pointer;
+  padding: 0 4px;
+  color: var(--ink-3);
+}
+.be-chip button:hover,
+.be-chip button:focus-visible {
+  color: var(--ink);
+}
+.be-add {
+  width: 130px;
+  font: 12px var(--f-mono);
+  padding: 2px 6px;
+}
+.be-problems,
+.be-warn {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+}
+.be-problems {
+  color: var(--red);
+}
+.be-warn {
+  color: var(--gold);
+}
+.be footer {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 760px) {
+  .be {
+    width: 100vw;
+    border-left: 0;
+  }
+  .be-row {
+    flex-wrap: wrap;
+  }
+}

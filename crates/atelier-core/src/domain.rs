@@ -41,6 +41,20 @@ pub struct ProjectRemoved {
 }
 kind!(ProjectRemoved, "project.removed");
 
+// ─── project files (stream: p/<project>) ────────────────────────────────────
+
+/// A file under the project's `.atelier/` was created, edited or deleted. Carries the whole new text so a
+/// projection can fold the latest content from the event alone.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FileChanged {
+    /// Relative to the project root, `/`-separated (e.g. `.atelier/tickets/AT-035.md`).
+    pub path: String,
+    /// `None` means the file was deleted.
+    pub text: Option<String>,
+}
+kind!(FileChanged, "file.changed");
+
 // ─── sessions (stream: p/<project>/s/<session>) ─────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

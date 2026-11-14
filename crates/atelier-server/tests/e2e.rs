@@ -1280,3 +1280,126 @@ async fn a_message_to_a_busy_session_waits_for_its_turn() {
     assert_eq!(kinds, ["cc.assistant", "agent.message", "turn.ended", "cc.assistant"]);
     app.supervisor.shutdown().await;
 }
+
+fn file_events(c: &Client) -> Vec<Value> {
+    c.seen
+        .iter()
+        .filter(|m| m["t"] == "events")
+        .flat_map(|m| m["events"].as_array().unwrap().clone())
+        .filter(|e| e["kind"] == "file.changed")
+        .collect()
+}
+
+/// Read frames until the sub has seen at least `n` file events, then return them all.
+async fn file_events_reaching(c: &mut Client, n: usize) -> Vec<Value> {
+    while file_events(c).len() < n {
+        c.until(|m| m["t"] == "events").await;
+    }
+    file_events(c)
+}
+
+/// Nothing more arrives for a while (the watcher debounces at 100 ms).
+async fn settle(c: &mut Client) {
+    while tokio::time::timeout(Duration::from_millis(700), c.until(|m| m["t"] == "events")).await.is_ok() {}
+}
+
+#[tokio::test]
+async fn atelier_files_become_events() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let tickets = repo.join(".atelier/tickets");
+    std::fs::create_dir_all(&tickets).unwrap();
+    let ticket = tickets.join("X.md");
+    std::fs::write(&ticket, "one").unwrap();
+    std::fs::write(tickets.join(".hidden"), "skip me").unwrap();
+
+    let config = Config {
+        home: tmp.path().join("home"),
+        listen: "127.0.0.1:0".parse().unwrap(),
+        listen_tailscale: false,
+        tailscale_bin: "false".into(),
+        claude_bin: FAKE.into(),
+        claude_home: tmp.path().join("claude"),
+        idle_timeout: Duration::from_secs(600),
+        auto_title: false,
+        spawn: Default::default(),
+        token: Some("secret".into()),
+    };
+    std::fs::create_dir_all(&config.home).unwrap();
+    let serve = |app: &App| {
+        let app = app.clone();
+        async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(axum::serve(listener, app.router()).into_future());
+            addr
+        }
+    };
+
+    let app = App::start(config.clone()).await.unwrap();
+    let mut c = Client::connect(serve(&app).await, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    let stream = format!("p/{}", project.as_str().unwrap());
+    c.send(json!({"t": "sub", "id": 1, "filter": {"stream": stream}, "from": 1})).await;
+
+    // Added: the existing file arrives with its text; the hidden one doesn't.
+    let evs = file_events_reaching(&mut c, 1).await;
+    assert_eq!(
+        (evs[0]["body"]["path"].as_str(), evs[0]["body"]["text"].as_str()),
+        (Some(".atelier/tickets/X.md"), Some("one"))
+    );
+    assert_eq!(evs[0]["actor"], "atelier");
+
+    // Edited: exactly one more event.
+    std::fs::write(&ticket, "two").unwrap();
+    let evs = file_events_reaching(&mut c, 2).await;
+    settle(&mut c).await;
+    assert_eq!(file_events(&c).len(), 2);
+    assert_eq!(evs[1]["body"]["text"], "two");
+
+    // A burst of writes coalesces; the last event has the final content.
+    for i in 0..20 {
+        std::fs::write(&ticket, format!("burst {i}")).unwrap();
+    }
+    file_events_reaching(&mut c, 3).await;
+    settle(&mut c).await;
+    let evs = file_events(&c);
+    assert!(evs.len() <= 8, "{} events for one burst", evs.len());
+    assert_eq!(evs.last().unwrap()["body"]["text"], "burst 19");
+
+    // A new file in a new directory (as `git pull` would bring).
+    let n = evs.len();
+    std::fs::create_dir_all(repo.join(".atelier/notes")).unwrap();
+    std::fs::write(repo.join(".atelier/notes/n.md"), "note").unwrap();
+    let evs = file_events_reaching(&mut c, n + 1).await;
+    assert_eq!(evs.last().unwrap()["body"]["path"], ".atelier/notes/n.md");
+
+    // Deleted: text is null.
+    std::fs::remove_file(&ticket).unwrap();
+    let evs = file_events_reaching(&mut c, n + 2).await;
+    assert_eq!(evs.last().unwrap()["body"], json!({"path": ".atelier/tickets/X.md", "text": null}));
+    settle(&mut c).await;
+    let total = file_events(&c).len();
+
+    // Restart with nothing changed: no new events.
+    let _ = app.stopping.send(true);
+    drop(c);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let app = App::start(config.clone()).await.unwrap();
+    let mut c = Client::connect(serve(&app).await, "secret").await;
+    c.send(json!({"t": "sub", "id": 1, "filter": {"stream": stream}, "from": 1})).await;
+    c.until(|m| m["t"] == "live").await;
+    assert_eq!(file_events(&c).len(), total);
+
+    // Edit while stopped: the restart appends exactly one event.
+    let _ = app.stopping.send(true);
+    drop(c);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    std::fs::write(repo.join(".atelier/notes/n.md"), "note, edited").unwrap();
+    let app = App::start(config).await.unwrap();
+    let mut c = Client::connect(serve(&app).await, "secret").await;
+    c.send(json!({"t": "sub", "id": 1, "filter": {"stream": stream}, "from": 1})).await;
+    c.until(|m| m["t"] == "live").await;
+    assert_eq!(file_events(&c).len(), total + 1);
+    assert_eq!(file_events(&c).last().unwrap()["body"]["text"], "note, edited");
+}

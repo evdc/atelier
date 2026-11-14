@@ -27,6 +27,7 @@ rusqlite = { version = "0.41", features = ["bundled"] }
 uuid = { version = "1.29", features = ["v4", "v7", "serde"] }
 axum = { version = "0.8", features = ["ws"] }
 dirs = "7.0"
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 ts-rs = { version = "12.0", features = ["serde-json-impl"] }
 tempfile = "3"
 

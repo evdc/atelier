@@ -7,6 +7,7 @@
 //! 2. a row type in `atelier-proto` and a [`ViewName`] variant;
 //! 3. `snapshot`/`row` arms below. Watches then work with no other changes.
 
+pub mod files;
 pub mod projects;
 pub mod sessions;
 pub mod text;
@@ -20,7 +21,7 @@ use serde_json::Value;
 
 pub fn projections() -> Vec<Box<dyn Projection>> {
     // Order matters only for cross-table reads inside `apply`; none yet.
-    vec![Box::new(projects::Projects), Box::new(sessions::Sessions), Box::new(usage::Usage)]
+    vec![Box::new(projects::Projects), Box::new(sessions::Sessions), Box::new(usage::Usage), Box::new(files::Files)]
 }
 
 /// All rows of a view (narrowed to `scope`, if given), in display order.

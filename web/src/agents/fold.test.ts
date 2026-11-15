@@ -58,6 +58,36 @@ describe("fold", () => {
     expect(t.items).toEqual([{ k: "message", id: `e${seq - 2}`, ts: seq - 2, from: "s9", text: "check the WAL", refs: [4, 7] }]);
   });
 
+  it("folds a slash command and its output into one collapsed control item, not a user message", () => {
+    const t = emptyTranscript();
+    fold(t, ev("cc.user", { type: "user", isMeta: true, message: { content: "<local-command-caveat>ran directly</local-command-caveat>" } }));
+    fold(t, ev("cc.user", { type: "user", message: { content: "<command-name>/compact</command-name>\n<command-message>compact</command-message>" } }));
+    fold(t, ev("cc.user", { type: "user", message: { content: "<local-command-stdout>Compacted </local-command-stdout>" } }));
+    fold(t, ev("cc.user", { type: "user", message: { content: "<command-name>/clear</command-name>" } }));
+    fold(t, ev("cc.user", { type: "user", message: { content: "<local-command-stdout></local-command-stdout>" } }));
+    expect(t.items.map((i) => (i.k === "control" ? [i.name, i.text] : i.k))).toEqual([
+      ["/compact", "Compacted"],
+      ["/clear", ""],
+    ]);
+  });
+
+  it("folds the compaction summary into a collapsed item, not a user message", () => {
+    const t = emptyTranscript();
+    fold(t, ev("cc.user", { type: "user", isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { content: "Summary of the session so far." } }));
+    fold(t, ev("cc.user", { type: "user", message: { content: "<command-name>/compact</command-name>" } }));
+    fold(t, ev("cc.user", { type: "user", message: { content: "<local-command-stdout>Compacted </local-command-stdout>" } }));
+    expect(t.items.map((i) => (i.k === "control" ? [i.name, i.text] : i.k))).toEqual([
+      ["Compaction summary", "Summary of the session so far."],
+      ["/compact", "Compacted"],
+    ]);
+  });
+
+  it("drops command output that has no command before it", () => {
+    const t = emptyTranscript();
+    fold(t, ev("cc.user", { type: "user", message: { content: "<local-command-stdout>Compacted </local-command-stdout>" } }));
+    expect(t.items).toEqual([]);
+  });
+
   it("voids pending requests when the process exits", () => {
     const t = emptyTranscript();
     fold(t, ev("permission.requested", { request_id: "r", tool: "Bash", input: {}, raw: {} }));

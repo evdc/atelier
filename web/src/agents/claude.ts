@@ -26,6 +26,22 @@ interface CcMessage {
   message?: { id?: string; content?: Block[] | string; usage?: unknown };
   parent_tool_use_id?: string | null;
   isMeta?: boolean;
+  isCompactSummary?: boolean;
+}
+
+// A slash command arrives as two `user` entries: `<command-name>` (what was typed), then the
+// `<local-command-stdout>` (or `-stderr`) it printed. Neither is something the person typed.
+const COMMAND_TAG = /<command-name>([\s\S]*?)<\/command-name>/;
+const OUTPUT_TAG = /<local-command-(?:stdout|stderr)>([\s\S]*?)<\/local-command-(?:stdout|stderr)>/;
+
+/** Output attaches to the command entry just before it. Output with no command before it has no label to show, so it's dropped. */
+function foldCommand(t: Transcript, id: string, ts: number, name: string | undefined, output: string | undefined) {
+  const last = t.items[t.items.length - 1];
+  if (name === undefined) {
+    if (last?.k === "control" && !last.text) last.text = output ?? "";
+    return;
+  }
+  t.items.push({ k: "control", id, ts, name, text: output ?? "" });
 }
 
 /** The text a person typed in a `user` entry; tool results carry none. */
@@ -64,9 +80,17 @@ export const claude: Adapter = {
       // Live sessions show the person's typing as `user.message`; imported history only has this
       // entry, so its typed text has to surface here. Meta entries are CC bookkeeping, not typing.
       let typed = m.isMeta ? "" : typedText(m.message?.content);
+      // After /compact, Claude Code injects its summary as a user entry the person never typed.
+      if (m.isCompactSummary) {
+        t.items.push({ k: "control", id: `e${ev.seq}`, ts: ev.ts, name: "Compaction summary", text: typedText(m.message?.content) });
+        typed = "";
+      }
       // Another session's message reaches the agent as an envelope; the card for it comes from `agent.message`.
       if (typed.startsWith("<atelier-message ")) typed = "";
-      if (typed) t.items.push({ k: "user", id: `e${ev.seq}`, ts: ev.ts, text: typed, images: [] });
+      const cmd = COMMAND_TAG.exec(typed)?.[1];
+      const out = OUTPUT_TAG.exec(typed)?.[1];
+      if (cmd !== undefined || out !== undefined) foldCommand(t, `e${ev.seq}`, ev.ts, cmd?.trim(), out?.trim());
+      else if (typed) t.items.push({ k: "user", id: `e${ev.seq}`, ts: ev.ts, text: typed, images: [] });
       for (const b of blocks) {
         if (b.type !== "tool_result" || !b.tool_use_id) continue;
         const item = t.items[t.tools[b.tool_use_id] ?? -1];

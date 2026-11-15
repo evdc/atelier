@@ -8,22 +8,37 @@ use atelier_proto::local;
 use serde::Serialize;
 
 /// What the web UI needs to connect (`window.__ATELIER__`).
-#[derive(Serialize)]
+#[derive(Serialize, Debug, PartialEq)]
 pub struct Target {
     url: String,
-    token: String,
+    /// Not needed on a server's tailnet address from one of its owner's devices.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
 }
 
-/// Connect to `ATELIER_URL` + `ATELIER_TOKEN` if set (a remote server);
-/// otherwise to the local server, starting it if it isn't running.
+/// Connect to a remote server if one is configured: `ATELIER_URL` (+ `ATELIER_TOKEN`), else `<home>/remote.json`
+/// (see [`parse_remote`]). Otherwise connect to the local server, starting it if it isn't running.
+///
+/// A remote target means this machine runs no server at all: no login item, no spawned process. A second, empty
+/// local server beside the real one would only confuse where the sessions are.
 ///
 /// Doesn't wait for a freshly started server: the UI shows "connecting" and
 /// retries, so the window appears immediately.
 pub fn ensure_running() -> Result<Target, Box<dyn std::error::Error>> {
-    if let (Ok(url), Ok(token)) = (std::env::var("ATELIER_URL"), std::env::var("ATELIER_TOKEN")) {
+    let home = local::home().ok_or("no home directory")?;
+    if let Ok(url) = std::env::var("ATELIER_URL") {
+        // `make app` points us at a loopback server without a token: that one is ours, so use our token. Only a
+        // remote server gets to go tokenless (it trusts the tailnet).
+        let token = match std::env::var("ATELIER_TOKEN").ok() {
+            Some(t) => Some(t),
+            None if is_loopback(&url) => Some(local::token(&home)?),
+            None => None,
+        };
         return Ok(Target { url, token });
     }
-    let home = local::home().ok_or("no home directory")?;
+    if let Ok(text) = std::fs::read_to_string(home.join(REMOTE_FILE)) {
+        return parse_remote(&text).map_err(|e| format!("{}: {e}", home.join(REMOTE_FILE).display()).into());
+    }
     // Create the token now, so it's known before the server finishes starting.
     let token = local::token(&home)?;
     let addr = local_addr();
@@ -41,7 +56,56 @@ pub fn ensure_running() -> Result<Target, Box<dyn std::error::Error>> {
     if !started && !up {
         spawn_detached(&home)?;
     }
-    Ok(Target { url: format!("ws://{addr}/ws"), token })
+    Ok(Target { url: format!("ws://{addr}/ws"), token: Some(token) })
+}
+
+fn is_loopback(url: &str) -> bool {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split('/').next().unwrap_or("");
+    let host =
+        authority.rsplit_once(':').map_or(authority, |(h, p)| if p.parse::<u16>().is_ok() { h } else { authority });
+    matches!(host.trim_matches(['[', ']']), "127.0.0.1" | "localhost" | "::1")
+}
+
+/// `<home>/remote.json`: `{"url": "my-vps", "token": "…"}`. Written by hand or by the server's install script;
+/// delete it to go back to a local server. `url` is a bare host, `host:port` or a full `ws(s)://` URL; `token` is
+/// optional because the server trusts your other tailnet devices.
+const REMOTE_FILE: &str = "remote.json";
+
+fn parse_remote(text: &str) -> Result<Target, String> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        url: String,
+        token: Option<String>,
+    }
+    let f: File = serde_json::from_str(text).map_err(|e| format!("expected {{\"url\": …, \"token\": …}}: {e}"))?;
+    let token = f.token.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
+    Ok(Target { url: ws_url(&f.url)?, token })
+}
+
+/// Mirrors `normalizeServerUrl` in `web/src/lib/server.ts` (port 7747 and path `/ws` by default).
+fn ws_url(input: &str) -> Result<String, String> {
+    let s = input.trim();
+    let (scheme, rest) = match s.split_once("://") {
+        Some((sc, rest)) => (
+            match sc.to_ascii_lowercase().as_str() {
+                "ws" | "http" => "ws",
+                "wss" | "https" => "wss",
+                _ => return Err(format!("unsupported scheme in {s:?}")),
+            },
+            rest,
+        ),
+        None => ("ws", s),
+    };
+    let (authority, path) = rest.split_once('/').map_or((rest, ""), |(a, p)| (a, p));
+    if authority.is_empty() || authority.contains(char::is_whitespace) {
+        return Err(format!("{s:?} isn't a server address"));
+    }
+    // A bare IPv6 literal or host has no port yet; `[v6]:port` and `host:port` do.
+    let has_port = authority.rsplit_once(':').is_some_and(|(h, p)| !h.ends_with(':') && p.parse::<u16>().is_ok());
+    let authority = if has_port { authority.to_owned() } else { format!("{authority}:{}", local::DEFAULT_PORT) };
+    let path = if path.is_empty() { "ws" } else { path };
+    Ok(format!("{scheme}://{authority}/{path}"))
 }
 
 /// Where the local server listens: `ATELIER_LISTEN` (set by `make app`, so a dev server runs beside the installed
@@ -313,6 +377,28 @@ mod tests {
         assert!(!older_than_app("atelierd/999.0.0"));
         assert!(!older_than_app("garbage"));
         assert!(version_of("atelierd/0.10.1") > version_of("atelierd/0.9.9"));
+    }
+
+    #[test]
+    fn loopback_urls_are_ours() {
+        assert!(is_loopback("ws://127.0.0.1:7747/ws"));
+        assert!(is_loopback("ws://localhost/ws"));
+        assert!(is_loopback("ws://[::1]:7747/ws"));
+        assert!(!is_loopback("ws://my-vps:7747/ws"));
+        assert!(!is_loopback("wss://100.1.2.3/ws"));
+    }
+
+    #[test]
+    fn remote_file_gives_a_websocket_url() {
+        let t = parse_remote(r#"{"url": "my-vps", "token": " abc "}"#).unwrap();
+        assert_eq!(t, Target { url: "ws://my-vps:7747/ws".into(), token: Some("abc".into()) });
+        let t = parse_remote(r#"{"url": "https://vps.tail1.ts.net/custom", "token": ""}"#).unwrap();
+        assert_eq!(t, Target { url: "wss://vps.tail1.ts.net:7747/custom".into(), token: None });
+        assert_eq!(ws_url("100.1.2.3:9000").unwrap(), "ws://100.1.2.3:9000/ws");
+        assert_eq!(ws_url("[fd7a::1]").unwrap(), "ws://[fd7a::1]:7747/ws");
+        assert!(ws_url("ftp://x").is_err());
+        assert!(ws_url("").is_err());
+        assert!(parse_remote("not json").is_err());
     }
 
     #[test]

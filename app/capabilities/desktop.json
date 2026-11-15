@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "The notification plugin is only registered on desktop (see src/lib.rs), so its permission must not be requested on mobile builds.",
+  "windows": ["main"],
+  "platforms": ["macOS", "windows", "linux"],
+  "permissions": ["notification:default"]
+}

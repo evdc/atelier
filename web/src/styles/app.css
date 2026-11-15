@@ -806,15 +806,21 @@
   animation: breathe 1s steps(2) infinite;
 }
 
-.thinking {
+.thinking,
+.control {
   margin-left: 31px;
   font-size: 13px;
   color: var(--ink-3);
   font-style: italic;
 }
-.thinking summary {
+.thinking summary,
+.control summary {
   cursor: pointer;
   list-style: none;
+}
+.control summary {
+  font-family: var(--mono, monospace);
+  font-style: normal;
 }
 .thinking p {
   white-space: pre-wrap;

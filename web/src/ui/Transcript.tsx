@@ -16,7 +16,7 @@ import { Markdown } from "./Markdown";
 // per-kind estimate. Spacers stand in for everything outside the window.
 const GAP = 12; // matches .tx gap; folded into every cached height
 const OVERSCAN = 600;
-const EST: Record<Item["k"], number> = { user: 56, message: 90, text: 110, thinking: 24, tool: 26, permission: 70, turn: 20, note: 24 };
+const EST: Record<Item["k"], number> = { user: 56, message: 90, text: 110, thinking: 24, control: 24, tool: 26, permission: 70, turn: 20, note: 24 };
 
 interface Win {
   s: number;
@@ -182,6 +182,7 @@ function ItemView(props: {
           </details>
         )}
       </Match>
+      <Match when={it.k === "control" && it}>{(c) => <ControlView name={c().name} text={c().text} />}</Match>
       <Match when={it.k === "tool" && it}>{(tool) => <ToolView tool={tool()} cwd={props.session().workspace.path} />}</Match>
       <Match when={it.k === "permission" && it}>
         {(p) => <Ask item={p()} session={props.session} newest={() => props.newestAsk() === p().id} />}
@@ -197,6 +198,19 @@ function ItemView(props: {
       </Match>
       <Match when={it.k === "note" && it}>{(n) => <p class={`note ${n().tone}`}>{n().text}</p>}</Match>
     </Switch>
+  );
+}
+
+/** A slash command or Claude Code's compaction summary: collapsed, and its markdown only parsed once opened. */
+function ControlView(props: { name: string; text: string }) {
+  const [open, setOpen] = createSignal(false);
+  return (
+    <details class="control" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{props.name}</summary>
+      <Show when={open() && props.text}>
+        <Markdown text={props.text} />
+      </Show>
+    </details>
   );
 }
 

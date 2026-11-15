@@ -41,3 +41,10 @@ Written to be picked up cold by an agent: read the ticket, then the files it nam
 | AT-031 | Ask a fork: question a session without spending its context | M5 | M | AT-030, AT-033 |
 | AT-032 | Budgets for session trees | M9 | S | AT-029 |
 | AT-033 | Workspaces from other sessions: share (read-only) and branch-from | M4 | M | |
+| AT-035 | Watch `.atelier/`: file changes become `file.changed` events | M4 | M | |
+| AT-036 | Tickets projection and the `tickets` view | M4 | M | AT-035 |
+| AT-037 | Board config: statuses and columns in `.atelier/board.json` | M4 | S | AT-035 |
+| AT-038 | Write paths: `ticket.update` and `board.update` RPCs | M4 | S | AT-036, AT-037 |
+| AT-039 | Tickets board view (read-only) | M4 | M | AT-036, AT-037 |
+| AT-040 | Drag tickets between columns | M4 | M | AT-038, AT-039 |
+| AT-041 | Customize board columns and statuses | M4 | M | AT-038, AT-039 |

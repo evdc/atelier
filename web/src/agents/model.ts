@@ -31,6 +31,8 @@ export type Item =
       /** The vendor's offered rules ("always allow"), verbatim from the request. */
       suggestions: PermissionSuggestion[];
     }
+  /** A slash command the person ran and its output, as Claude Code records them. Collapsed by default. */
+  | { k: "control"; id: string; ts: number; name: string; text: string }
   | { k: "turn"; id: string; ts: number; error: boolean; cost: number | null; ms: number | null }
   | { k: "note"; id: string; ts: number; text: string; tone: "quiet" | "warn" };
 // `sub`: set when the item comes from a subagent (the parent's tool_use id).

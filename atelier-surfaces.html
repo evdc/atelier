@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Atelier — five surfaces</title>
+<style>
+/* Companion to atelier-mockups.html. Same tokens, same rules: only the variables carry colour
+   (red = needs you, blue = running, green = done, gold = the agent / things to notice), hairlines not shadows,
+   the display face for headings only. Routing is :target; no script. */
+:root{
+  --paper:#efeadf; --paper-2:#e6dfcf; --card:#f7f3eb; --glow:#fbf8f0;
+  --ink:#1f1b16; --ink-2:#5b5348; --ink-3:#8c8272;
+  --red:#8e3322; --green:#46684a; --blue:#30506f; --gold:#98722a;
+  --hair:color-mix(in oklab,var(--ink) 55%,transparent);
+  --line:color-mix(in oklab,var(--ink) 17%,transparent);
+  --wash:color-mix(in oklab,var(--ink) 5%,transparent);
+  --f-display:"IM Fell English","Iowan Old Style",Georgia,serif;
+  --f-ui:"Source Serif 4","Iowan Old Style",Georgia,serif;
+  --f-mono:"Fragment Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#15130f; --paper-2:#1e1b16; --card:#1b1814; --glow:#3a3020;
+  --ink:#ebe2cd; --ink-2:#b4a990; --ink-3:#7f7462;
+  --red:#d47b64; --green:#93b48d; --blue:#93aecb; --gold:#d6b061; color-scheme:dark}}
+
+*,*::before,*::after{box-sizing:border-box}
+html{color-scheme:light dark}
+body{margin:0; background:var(--paper); color:var(--ink); font:400 15px/1.45 var(--f-ui)}
+a{color:inherit; text-decoration-color:var(--line); text-underline-offset:3px}
+a:hover{text-decoration-color:var(--red)}
+h1,h2,h3,h4{font-family:var(--f-display); font-weight:400; margin:0; line-height:1.15; text-wrap:balance}
+p{margin:0}
+code,.mono{font-family:var(--f-mono); font-size:.84em; font-variant-numeric:tabular-nums}
+.muted{color:var(--ink-2)} .faint{color:var(--ink-3)}
+.cap{font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-2)}
+.wrap{padding-inline:16px; max-width:1500px; margin:0 auto}
+
+.head{display:grid; grid-template-columns:auto 1fr; gap:6px 22px; align-items:end; padding-block:22px 16px; border-bottom:1px solid var(--ink)}
+.emblem{grid-row:span 2; width:58px; height:58px; position:relative; border:1px solid var(--ink); overflow:hidden;
+  background:repeating-conic-gradient(from 0deg at 50% 100%,var(--hair) 0 .8deg,transparent .8deg 8deg),var(--card)}
+.emblem::after{content:""; position:absolute; left:16px; bottom:-14px; width:26px; height:26px; border-radius:50%; border:1px solid var(--ink); background:var(--glow)}
+.head h1{font-size:clamp(26px,3.4vw,38px)}
+.head p{color:var(--ink-2); max-width:84ch; font-size:15.5px}
+.steps{display:flex; overflow-x:auto; border-bottom:1px solid var(--line); margin-top:4px}
+.steps a{display:grid; padding:10px 18px 9px; text-decoration:none; border-bottom:2px solid transparent; min-width:max-content; color:var(--ink-2)}
+.steps a b{font:400 17px var(--f-display); color:var(--ink)}
+.steps a small{font:11.5px var(--f-mono); color:var(--ink-3)}
+.steps a:hover b{color:var(--red)}
+.doc:not(:has(.view:target)) .steps a[href="#v1"],
+.doc:has(#v1:target) .steps a[href="#v1"],.doc:has(#v2:target) .steps a[href="#v2"],.doc:has(#v3:target) .steps a[href="#v3"],
+.doc:has(#v4:target) .steps a[href="#v4"],.doc:has(#v5:target) .steps a[href="#v5"]{border-bottom-color:var(--red)}
+.doc:not(:has(.view:target)) .steps a[href="#v1"] b,
+.doc:has(#v1:target) .steps a[href="#v1"] b,.doc:has(#v2:target) .steps a[href="#v2"] b,.doc:has(#v3:target) .steps a[href="#v3"] b,
+.doc:has(#v4:target) .steps a[href="#v4"] b,.doc:has(#v5:target) .steps a[href="#v5"] b{color:var(--red)}
+
+.view{display:none; scroll-margin-top:300vh; padding-block:22px 64px}
+.view:target{display:block}
+main:not(:has(.view:target)) #v1{display:block}
+.stage{display:grid; grid-template-columns:minmax(0,1fr) 330px; gap:30px; align-items:start; isolation:isolate}
+@media (max-width:1000px){.stage{grid-template-columns:1fr}}
+
+.notes{display:grid; gap:18px; align-content:start}
+.notes .num{font:italic 46px/0.9 var(--f-display); color:var(--red)}
+.notes h2{font-size:26px}
+.notes .lede{font-size:15.5px; line-height:1.5}
+.notes h3{font:11px var(--f-ui); letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2); border-bottom:1px solid var(--line); padding-bottom:5px; margin-bottom:8px}
+.notes ul{margin:0; padding:0 0 0 16px; display:grid; gap:6px; font-size:14px; color:var(--ink-2)}
+.notes ul li::marker{color:var(--ink-3)}
+.notes li b{color:var(--ink); font-weight:500}
+.next{font-size:14px; border-top:1px solid var(--ink); padding-top:10px}
+.next a{font-family:var(--f-display); font-size:17px}
+
+.win{border:1px solid var(--ink); background:var(--card); position:relative; min-width:0}
+.win::before{content:""; position:absolute; inset:0; translate:6px 6px; z-index:-1; background:repeating-linear-gradient(-45deg,var(--hair) 0 .6px,transparent .6px 3.2px)}
+.tb{height:34px; display:flex; align-items:center; gap:10px; padding:0 12px; border-bottom:1px solid var(--ink); background:var(--paper-2)}
+.tb .lights{display:flex; gap:6px}
+.tb .lights i{width:11px; height:11px; border-radius:50%; border:1px solid var(--ink-2)}
+.tb .ttl{flex:1; text-align:center; font-size:12.5px; color:var(--ink-2)}
+.tb .ttl b{color:var(--ink); font-weight:500}
+.tb .r{font:11px var(--f-mono); color:var(--ink-3)}
+.btn{display:inline-flex; align-items:center; gap:7px; font:500 12.5px var(--f-ui); padding:4px 10px; border:1px solid var(--ink); background:var(--card); color:var(--ink); white-space:nowrap}
+.btn.dark{background:var(--ink); color:var(--paper)}
+.btn.q{border-color:var(--line)}
+.btn kbd{font:10.5px var(--f-mono); color:var(--ink-3)}
+.btn.dark kbd{color:color-mix(in oklab,var(--paper) 65%,transparent)}
+.ref{display:inline; font:11.5px/1.9 var(--f-mono); padding:1px 5px; border:1px solid var(--line); background:var(--paper); white-space:nowrap}
+.ref::before{margin-right:4px; font-family:var(--f-ui); font-size:11px; color:var(--ink-3)}
+.ref.code::before{content:"⟨⟩"} .ref.tk::before{content:"#"} .ref.ss::before{content:"◌"} .ref.nt::before{content:"¶"} .ref.q::before{content:"?"}
+@keyframes pulse{50%{opacity:.3}}
+
+/* marks: one vocabulary across every surface */
+.mk{display:inline-block; width:8px; height:8px; border:1px solid var(--ink-3); border-radius:50%; flex:none}
+.mk.run{background:var(--blue); border-color:var(--blue); animation:pulse 1.6s infinite}
+.mk.wait{background:var(--red); border-color:var(--red); border-radius:0; rotate:45deg; scale:.9}
+.mk.prop{background:var(--green); border-color:var(--green); border-radius:0}
+.mk.stop{border-style:dashed}
+
+/* ───────── I. Frontispiece ───────── */
+.fp{padding:30px 44px 24px; display:grid; gap:26px}
+.fp-title{display:grid; justify-items:center; gap:10px; text-align:center; padding-bottom:26px; border-bottom:1px solid var(--ink)}
+.sun{width:230px; height:92px; overflow:hidden; position:relative; border-bottom:1px solid var(--ink)}
+.sun::before{content:""; position:absolute; left:0; top:-23px; width:230px; height:230px; border-radius:50%;
+  background:repeating-conic-gradient(from 0deg,var(--hair) 0 .55deg,transparent .55deg 5deg);
+  -webkit-mask:radial-gradient(circle,transparent 30px,#000 31px,#000 52%,transparent 70%); mask:radial-gradient(circle,transparent 30px,#000 31px,#000 52%,transparent 70%)}
+.sun::after{content:""; position:absolute; left:91px; top:68px; width:48px; height:48px; border-radius:50%; border:1px solid var(--ink); background:var(--glow)}
+.intent{font:italic 400 36px/1.18 var(--f-display); max-width:24ch; margin-top:4px}
+.fp-title .by{font-size:12.5px; color:var(--ink-3)}
+.fp-cols{display:grid; grid-template-columns:1.25fr 1fr 1fr}
+.fp-col{padding:0 22px; border-left:1px solid var(--line); display:grid; gap:11px; align-content:start}
+.fp-col:first-child{padding-left:0; border-left:0} .fp-col:last-child{padding-right:0}
+.fp-col h3{font-size:21px; display:flex; justify-content:space-between; align-items:baseline}
+.fp-col h3 span{font:11px var(--f-mono); color:var(--ink-3)}
+.fi{display:grid; gap:2px; font-size:14px}
+.fi .t{font-weight:500}
+.fi small{font-size:12.5px; color:var(--ink-2)}
+.fi .thr{display:flex; gap:5px; align-items:center; font-size:12px; color:var(--ink-3); margin-top:2px}
+.fi.off{color:var(--ink-3)} .fi.off .t{font-weight:400}
+.fi .g{color:var(--gold)} .fi .r{color:var(--red)}
+.fp-foot{display:grid; grid-template-columns:1.25fr 2fr; border-top:1px solid var(--ink); padding-top:16px}
+.fp-foot > div{display:grid; gap:8px; align-content:start; padding:0 22px; border-left:1px solid var(--line)}
+.fp-foot > div:first-child{padding-left:0; border-left:0}
+.fp-foot .say{font:400 19px/1.25 var(--f-display)}
+.bars{display:flex; gap:7px; align-items:flex-end; height:44px}
+.bars i{width:16px; background:repeating-linear-gradient(-45deg,var(--hair) 0 .7px,transparent .7px 3px); border:1px solid var(--ink-2); border-bottom:0; position:relative}
+.bars i::after{content:attr(data-d); position:absolute; top:100%; left:0; right:0; text-align:center; font:9.5px var(--f-mono); color:var(--ink-3); padding-top:2px}
+.toward{display:flex; gap:6px; align-items:center}
+.toward i{width:11px; height:11px; background:var(--ink)}
+.toward i.o{background:none; border:1px solid var(--gold)}
+
+/* ───────── II. Score ───────── */
+.sc{display:grid; grid-template-columns:minmax(0,1fr) 270px}
+.sc-main{min-width:0; padding:12px 6px 0 14px}
+.sc svg{display:block; width:100%; height:auto}
+.sc svg text{font-family:var(--f-ui); fill:var(--ink)}
+.sc .lab{font-size:12.5px} .sc .sm{font:10px var(--f-mono); fill:var(--ink-3)}
+.sc .guide{stroke:var(--line); stroke-width:1}
+.sc .ln{stroke:var(--ink); stroke-width:1.3; fill:none}
+.sc .tick{stroke:var(--ink); stroke-width:1}
+.sc .dash{stroke-dasharray:3 3}
+.sc .msg{stroke:var(--gold); stroke-width:1.1; fill:none}
+.sc .rest{stroke:var(--red); stroke-width:3}
+.sc .f-ink{fill:var(--ink)} .sc .f-card{fill:var(--card); stroke:var(--ink); stroke-width:1.2}
+.sc .f-red{fill:var(--red)} .sc .f-green{fill:var(--green)} .sc .f-gold{fill:var(--gold)} .sc .f-blue{fill:var(--blue)}
+.sc .t-red{fill:var(--red)} .sc .t-gold{fill:var(--gold)}
+.sc .veil{fill:var(--card); opacity:.55}
+.sc .now{stroke:var(--red); stroke-width:1}
+.sc .head-ln{stroke:var(--ink); stroke-width:1.6}
+.sc .sel{fill:none; stroke:var(--red); stroke-width:1}
+.sc .livep{animation:pulse 1.6s infinite}
+.reading{font:400 19px/1.35 var(--f-display); max-width:44ch; padding:22px 0 26px}
+.legend{display:flex; gap:16px; flex-wrap:wrap; font-size:12px; color:var(--ink-2); padding:8px 0 10px; border-top:1px solid var(--line)}
+.legend span{display:inline-flex; gap:6px; align-items:center}
+.legend svg{width:26px; height:10px}
+.scrub{display:flex; gap:12px; align-items:center; padding:9px 14px; border-top:1px solid var(--ink); background:var(--paper); font-size:13px; grid-column:1/-1}
+.scrub .grow{flex:1}
+.sc-side{border-left:1px solid var(--line); background:var(--paper); padding:14px; display:grid; gap:12px; align-content:start; font-size:13px}
+.sc-side h4{font-size:19px}
+.terms{display:grid; grid-template-columns:auto 1fr; gap:5px 10px; font-size:12.5px}
+.terms dt{color:var(--ink-3)} .terms dd{margin:0}
+.letter{border:1px solid var(--line); background:var(--card); padding:9px 11px; font-style:italic; line-height:1.5}
+.acts{display:flex; gap:6px; flex-wrap:wrap}
+
+/* ───────── III. Gloss ───────── */
+.gl-h{display:flex; gap:10px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); font:12px var(--f-mono); color:var(--ink-2)}
+.gl-h .grow{flex:1}
+.gl{display:grid; grid-template-columns:176px 34px minmax(0,1fr) 270px; grid-auto-rows:23px; padding:14px 0 10px; font:12px/23px var(--f-mono)}
+.gl .n{grid-column:2; color:var(--ink-3); text-align:right; padding-right:8px}
+.gl .c{grid-column:3; white-space:pre; overflow:hidden; padding-left:6px}
+.gl .c.s{background:color-mix(in oklab,var(--red) 7%,transparent)}
+.gl .kw{color:var(--blue)} .gl .cm{color:var(--ink-3); font-style:italic}
+.hand{grid-column:1; margin:1px 10px 1px 14px; padding:1px 8px 0 0; border-right:1px solid var(--ink-3); text-align:right; font:12px/1.3 var(--f-ui); color:var(--ink-2); display:grid; align-content:start; cursor:default}
+.hand b{font-weight:500; color:var(--ink)} .hand small{font:10.5px var(--f-mono); color:var(--ink-3)}
+.hand.on{border-right:2px solid var(--red)} .hand.on b{color:var(--red)}
+.hand.you{border-right-style:double; border-right-width:3px}
+.gloss{grid-column:4; margin:1px 14px 1px 12px; padding-left:10px; border-left:1px solid var(--line); font:12.5px/1.4 var(--f-ui); color:var(--ink-2); display:grid; gap:3px; align-content:start}
+.gloss .cap{font-size:10px}
+.gloss q{font-style:italic; color:var(--ink); quotes:"“" "”"}
+.gloss.r{border-left-color:var(--red)} .gloss.r .cap{color:var(--red)}
+.gloss.g{border-left-color:var(--gold)} .gloss.g .cap{color:var(--gold)}
+.ask{border-top:1px solid var(--ink); background:var(--paper); padding:14px 16px 14px 220px; display:grid; gap:10px}
+.ask .qline{display:flex; gap:10px; align-items:baseline; border-bottom:1px solid var(--ink); padding-bottom:6px}
+.ask .qline em{flex:1; font-size:15px}
+.ask .ans{font-size:14px; line-height:1.6; max-width:70ch}
+.ask .prov{font-size:12px; color:var(--ink-3); display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+.ask .prov .grow{flex:1}
+
+/* ───────── IV. Desk ───────── */
+.duo{display:grid; grid-template-columns:minmax(0,1fr) 236px; gap:26px; align-items:end}
+.desk{display:grid; grid-template-columns:210px minmax(0,1fr); min-height:560px}
+.stack{border-right:1px solid var(--line); background:var(--paper); padding:14px 12px; display:grid; gap:8px; align-content:start}
+.slip{border:1px solid var(--line); background:var(--card); padding:7px 9px; display:grid; gap:4px; font-size:13px}
+.slip.on{border-color:var(--ink); box-shadow:inset 2px 0 0 var(--red)}
+.slip small{font-size:11.5px; color:var(--ink-3); display:flex; gap:6px; align-items:center}
+.wt{display:inline-flex; gap:2px} .wt i{width:4px; height:9px; background:var(--ink-2)}
+.stack .after{margin-top:10px; padding-top:10px; border-top:1px dotted var(--line); font:400 16px/1.3 var(--f-display); color:var(--ink-2)}
+.card-area{display:grid; place-items:center; padding:30px 34px;
+  background:radial-gradient(ellipse at 50% 0%,var(--glow),transparent 70%)}
+.dcard{border:1px solid var(--ink); background:var(--card); max-width:600px; padding:22px 26px 18px; display:grid; gap:14px; position:relative}
+.dcard::before{content:""; position:absolute; inset:0; translate:5px 5px; z-index:-1; border:1px solid var(--line); background:var(--card)}
+.dcard::after{content:""; position:absolute; inset:0; translate:10px 10px; z-index:-2; border:1px solid var(--line); background:var(--card)}
+.card-area{isolation:isolate}
+.dcard .from{display:flex; gap:8px; align-items:center; font-size:12.5px; color:var(--ink-2)}
+.dcard .from .grow{flex:1}
+.dcard .from .w{color:var(--red)}
+.dcard h3{font-size:27px; line-height:1.2}
+.dcard .ctx{font-size:14px; line-height:1.55; color:var(--ink-2)}
+.dcard .lean{font-size:13.5px; color:var(--gold); border-left:1px solid var(--gold); padding-left:10px}
+.opts{display:grid; gap:7px}
+.opt{display:flex; gap:10px; align-items:baseline; border:1px solid var(--line); padding:8px 11px; font-size:14px}
+.opt.on{border-color:var(--ink)}
+.opt kbd{font:11px var(--f-mono); color:var(--ink-3); border:1px solid var(--line); padding:0 5px}
+.opt small{margin-left:auto; font-size:11.5px; color:var(--gold)}
+.behind{border-top:1px dotted var(--line); padding-top:10px; font-size:12.5px; color:var(--ink-2); display:grid; gap:4px}
+.keys{display:flex; flex-wrap:wrap; gap:4px 16px; white-space:nowrap; font:11px var(--f-mono); color:var(--ink-3)}
+.phone{border:1px solid var(--ink); border-radius:26px; background:var(--card); padding:12px 12px 16px; display:grid; gap:10px; position:relative}
+.phone::before{content:""; position:absolute; inset:0; translate:6px 6px; z-index:-1; border-radius:26px; background:repeating-linear-gradient(-45deg,var(--hair) 0 .6px,transparent .6px 3.2px)}
+.phone .notch{width:64px; height:5px; border-radius:3px; background:var(--ink-3); justify-self:center; opacity:.5}
+.phone .from{font-size:11.5px; color:var(--ink-2); display:flex; justify-content:space-between}
+.phone h4{font-size:19px; line-height:1.22}
+.phone p{font-size:12.5px; color:var(--ink-2); line-height:1.45}
+.phone .opt{font-size:13px; padding:9px 10px}
+.phone .foot{font:10.5px var(--f-mono); color:var(--ink-3); text-align:center}
+
+/* ───────── V. Lens ───────── */
+.lens{display:grid; grid-template-columns:132px minmax(0,1fr); min-height:560px}
+.ladder{border-right:1px solid var(--line); background:var(--paper); padding:18px 0 18px 14px; display:grid; align-content:start; position:relative}
+.rung{padding:9px 12px 9px 14px; border-left:1px solid var(--ink-3); display:grid; gap:1px; position:relative}
+.rung b{font:400 17px var(--f-display)}
+.rung small{font:10.5px var(--f-mono); color:var(--ink-3)}
+.rung::before{content:""; position:absolute; left:-4px; top:15px; width:7px; height:7px; border-radius:50%; border:1px solid var(--ink-3); background:var(--paper)}
+.rung.on::before{background:var(--red); border-color:var(--red)}
+.rung.on b{color:var(--red)}
+.ladder .hint{margin:14px 12px 0 0; font-size:11.5px; color:var(--ink-3); line-height:1.4}
+.pr{padding:18px 24px 0; display:grid; gap:14px; align-content:start}
+.pr-h{display:grid; gap:4px; border-bottom:1px solid var(--ink); padding-bottom:12px}
+.pr-h h3{font-size:25px}
+.pr-h .meta{font-size:12.5px; color:var(--ink-3); display:flex; gap:12px; flex-wrap:wrap}
+.claim{display:grid; grid-template-columns:22px minmax(0,1fr) auto; gap:4px 10px; padding:9px 0; border-bottom:1px solid var(--line); align-items:baseline}
+.claim .no{font:italic 17px var(--f-display); color:var(--ink-3)}
+.claim .say{font-size:15px}
+.claim .ev{grid-column:2; font-size:12.5px; color:var(--ink-2); display:flex; gap:12px; flex-wrap:wrap}
+.claim .ev .ok{color:var(--green)}
+.claim .ev .chk{color:var(--blue)}
+.depth{display:inline-flex; gap:3px; align-items:center; font:10.5px var(--f-mono); color:var(--ink-3)}
+.depth i{width:9px; height:9px; border:1px solid var(--ink-3)}
+.depth i.d{background:var(--ink); border-color:var(--ink)}
+.claim.doubt{box-shadow:inset 2px 0 0 var(--gold); padding-left:10px; margin-left:-12px}
+.claim .dbt{grid-column:2/-1; font-size:13.5px; color:var(--gold); line-height:1.5}
+.parts{grid-column:2/-1; display:grid; gap:0; margin:6px 0 4px; border:1px solid var(--line); background:var(--paper)}
+.part{display:flex; gap:10px; align-items:baseline; padding:5px 10px; border-bottom:1px solid var(--line); font:12px var(--f-mono)}
+.part:last-child{border-bottom:0}
+.part .grow{flex:1} .part .add{color:var(--green)} .part .del{color:var(--red)}
+.part em{font:12px var(--f-ui); color:var(--ink-3)}
+.hunk{border-bottom:1px solid var(--line); background:var(--card); font:11.5px/1.7 var(--f-mono); padding:5px 0}
+.hunk div{white-space:pre; padding:0 10px 0 22px; position:relative}
+.hunk .a{background:color-mix(in oklab,var(--green) 12%,transparent)} .hunk .a::before{content:"+"; position:absolute; left:9px; color:var(--green)}
+.hunk .d{background:color-mix(in oklab,var(--red) 10%,transparent)} .hunk .d::before{content:"−"; position:absolute; left:9px; color:var(--red)}
+.verdict{margin:6px -24px 0; padding:12px 24px; border-top:1px solid var(--ink); background:var(--paper); display:flex; gap:12px; align-items:center; flex-wrap:wrap}
+.verdict .say{flex:1; min-width:240px; font:400 17px/1.3 var(--f-display)}
+</style>
+</head>
+<body>
+<div class="doc">
+<div class="wrap">
+  <header class="head">
+    <div class="emblem"></div>
+    <h1>Five surfaces for working beside agents</h1>
+    <p>Each one takes a single idea from the review and gives it a place to live. None of them is a chat window or a list of sessions. They share one vocabulary of marks and one rule: verbs make links, and every surface is a different reading of the same log.</p>
+  </header>
+  <nav class="steps">
+    <a href="#v1"><b>The Frontispiece</b><small>I · intent</small></a>
+    <a href="#v2"><b>The Score</b><small>II · time and lineage</small></a>
+    <a href="#v3"><b>The Gloss</b><small>III · provenance</small></a>
+    <a href="#v4"><b>The Desk</b><small>IV · attention</small></a>
+    <a href="#v5"><b>The Lens</b><small>V · review</small></a>
+  </nav>
+</div>
+
+<main class="wrap">
+
+<!-- ═══════════ I. FRONTISPIECE ═══════════ -->
+<section class="view" id="v1"><div class="stage">
+  <div class="win">
+    <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · commonplace</span><span class="r">⌘0 frontispiece</span></div>
+    <div class="fp">
+      <div class="fp-title">
+        <div class="sun"></div>
+        <div class="cap">commonplace · the present intent</div>
+        <h2 class="intent">Make sync trustworthy offline before adding anything new.</h2>
+        <div class="by">set by you on Tuesday · read by 14 sessions since · <a href="#v1">revise</a></div>
+      </div>
+
+      <div class="fp-cols">
+        <div class="fp-col">
+          <h3>In hand <span>4 threads</span></h3>
+          <div class="fi"><span class="t">Offline queue survives restart</span>
+            <small class="r">a question has waited 14 minutes for you</small>
+            <span class="thr"><i class="mk"></i><i class="mk"></i><i class="mk wait"></i><i class="mk run"></i> CP-61 · four sessions</span></div>
+          <div class="fi"><span class="t">Conflict copy instead of last-write-wins</span>
+            <small>two attempts running side by side</small>
+            <span class="thr"><i class="mk"></i><i class="mk run"></i><i class="mk run"></i> CP-58 · three sessions</span></div>
+          <div class="fi"><span class="t">Sync status in the footer</span>
+            <small>a proposal is ready to read</small>
+            <span class="thr"><i class="mk"></i><i class="mk prop"></i> CP-63 · two sessions</span></div>
+          <div class="fi off"><span class="t">Markdown export</span>
+            <small class="g">not toward the intent · resting since Monday</small>
+            <span class="thr"><i class="mk stop"></i> CP-49 · one session</span></div>
+        </div>
+        <div class="fp-col">
+          <h3>Settled <span>12 notes</span></h3>
+          <div class="fi"><span class="t">Writes replay in the order they were made</span><small>you, today · binds <span class="ref code">sync/replay.ts</span></small></div>
+          <div class="fi"><span class="t">Search is indexed after commit, never inline</span><small>Maren, Oct 12 · cited by 6 sessions</small></div>
+          <div class="fi"><span class="t">Cooldown, not CAPTCHA</span><small>you, Nov 3 · binds <span class="ref code">auth/limits.ts</span></small></div>
+          <div class="fi"><span class="t">No migrations this week</span><small class="g">expires Friday · cited by 3 sessions</small></div>
+        </div>
+        <div class="fp-col">
+          <h3>Unsettled <span>3</span></h3>
+          <div class="fi"><span class="t">Should rotation sign out other devices?</span><small class="r">asked by claude · open three days</small></div>
+          <div class="fi"><span class="t">How long may a queued write wait before we warn?</span><small>asked by you · no one is on it</small></div>
+          <div class="fi"><span class="t">The request-lifecycle page has drifted</span><small class="g">one box no longer matches its code</small></div>
+        </div>
+      </div>
+
+      <div class="fp-foot">
+        <div>
+          <div class="cap">Your attention, this week</div>
+          <div class="say">41 minutes given; nine changes landed.</div>
+          <div class="bars" style="margin-bottom:14px"><i style="height:30%" data-d="M"></i><i style="height:85%" data-d="T"></i><i style="height:40%" data-d="W"></i><i style="height:62%" data-d="T"></i><i style="height:22%" data-d="F"></i></div>
+        </div>
+        <div>
+          <div class="cap">Toward the intent</div>
+          <div class="say">Seven of the nine served it. Two did not.</div>
+          <div class="toward"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="o"></i><i class="o"></i>
+            <span class="faint" style="font-size:12.5px; margin-left:8px">export dialog polish · a dependency bump</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="notes">
+    <div class="num">I</div>
+    <h2>The Frontispiece</h2>
+    <p class="lede">A project opens on a title page, not a list. One sentence says what matters now. Everything under it is arranged by its relation to that sentence.</p>
+    <div><h3>What it breaks with</h3><ul>
+      <li>Dashboards count things. This states an intent and shows what serves it.</li>
+      <li>Sessions are not listed. They appear only as marks on the thread of work they belong to.</li>
+      <li>Decisions sit beside the work as first-class objects with an expiry, instead of being buried in chat.</li>
+    </ul></div>
+    <div><h3>Built from</h3><ul>
+      <li><b>The intent</b> is one line in <code>.atelier/project.md</code>, appended to each session's system prompt when it starts.</li>
+      <li><b>Threads</b> are <code>works-on</code> links from sessions to tickets.</li>
+      <li><b>Settled</b> items are notes; "binds" and "cited by" are backlinks.</li>
+      <li><b>Toward the intent</b> is one judgement per merged change, made by an agent and shown in gold because it is the agent's opinion.</li>
+    </ul></div>
+    <div><h3>Jank check</h3><ul>
+      <li>About twenty rows from three watched views. Nothing here grows with history.</li>
+    </ul></div>
+    <p class="next">Next: <a href="#v2">The Score ›</a></p>
+  </aside>
+</div></section>
+
+<!-- ═══════════ II. SCORE ═══════════ -->
+<section class="view" id="v2"><div class="stage">
+  <div class="win">
+    <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · Offline queue survives restart · score</span><span class="r">← → scrub</span></div>
+    <div class="sc">
+      <div class="sc-main">
+        <svg viewBox="0 0 900 372" role="img" aria-label="Six sessions drawn as staves over three hours">
+          <!-- hours -->
+          <g class="sm"><text x="190" y="16">09:00</text><text x="390" y="16">10:00</text><text x="590" y="16">11:00</text><text x="790" y="16">12:00</text></g>
+          <g class="guide"><line x1="190" y1="24" x2="190" y2="350"/><line x1="390" y1="24" x2="390" y2="350"/><line x1="590" y1="24" x2="590" y2="350"/><line x1="790" y1="24" x2="790" y2="350"/></g>
+          <!-- staves -->
+          <g class="guide"><line x1="190" y1="60" x2="884" y2="60"/><line x1="190" y1="120" x2="884" y2="120"/><line x1="190" y1="170" x2="884" y2="170"/><line x1="190" y1="220" x2="884" y2="220"/><line x1="190" y1="270" x2="884" y2="270"/><line x1="190" y1="320" x2="884" y2="320"/></g>
+          <g>
+            <text class="lab" x="6" y="58">main</text><text class="sm" x="6" y="71">where work lands</text>
+            <text class="lab" x="6" y="118">Offline queue</text><text class="sm" x="6" y="131">claude · started by you</text>
+            <text class="lab" x="6" y="168">Explore: where writes queue</text><text class="sm" x="6" y="181">claude · reads its worktree</text>
+            <text class="lab" x="6" y="218">A · queue in IndexedDB</text><text class="sm" x="6" y="231">codex · fork</text>
+            <text class="lab" x="6" y="268">B · queue in OPFS</text><text class="sm" x="6" y="281">claude · fork</text>
+            <text class="lab" x="6" y="318">Review of A</text><text class="sm" x="6" y="331">claude · reads A's worktree</text>
+          </g>
+
+          <!-- main -->
+          <rect class="f-green" x="201" y="56" width="8" height="8"/><text class="sm" x="214" y="52">CP-58 landed</text>
+
+          <!-- Offline queue 09:10 → 10:47 -->
+          <line class="ln" x1="223" y1="120" x2="547" y2="120"/>
+          <circle class="f-ink" cx="223" cy="120" r="3.5"/>
+          <g class="tick"><line x1="245" y1="115" x2="245" y2="125"/><line x1="262" y1="115" x2="262" y2="125"/><line x1="300" y1="115" x2="300" y2="125"/><line x1="352" y1="115" x2="352" y2="125"/><line x1="380" y1="115" x2="380" y2="125"/><line x1="476" y1="115" x2="476" y2="125"/><line x1="502" y1="115" x2="502" y2="125"/></g>
+          <!-- waited on you 10:05–10:19 -->
+          <line class="rest" x1="407" y1="120" x2="453" y2="120"/>
+          <rect class="f-red" x="403" y="116" width="8" height="8" transform="rotate(45 407 120)"/>
+          <text class="sm t-red" x="398" y="106">you · 14 min</text>
+          <circle class="f-card" cx="547" cy="120" r="3.5"/>
+
+          <!-- spawn Explore 09:25, done 09:42, reports back -->
+          <line class="ln dash" x1="273" y1="120" x2="273" y2="170"/>
+          <line class="ln" x1="273" y1="170" x2="330" y2="170"/>
+          <circle class="f-ink" cx="273" cy="170" r="3"/><circle class="f-card" cx="330" cy="170" r="3.5"/>
+          <path class="msg" d="M330 166 Q 341 140 350 123"/><circle class="f-gold" cx="350" cy="122" r="2.2"/>
+          <text class="sm t-gold" x="336" y="186">found 14 sites</text>
+
+          <!-- fork 10:42: two attempts with the same memory -->
+          <path class="ln" d="M515 120 V220 M519 120 V270"/>
+          <line class="ln" x1="515" y1="220" x2="794" y2="220"/>
+          <line class="ln" x1="519" y1="270" x2="607" y2="270"/>
+          <circle class="f-ink" cx="515" cy="220" r="3"/><circle class="f-ink" cx="519" cy="270" r="3"/>
+          <g class="tick"><line x1="560" y1="215" x2="560" y2="225"/><line x1="598" y1="215" x2="598" y2="225"/><line x1="634" y1="215" x2="634" y2="225"/><line x1="700" y1="215" x2="700" y2="225"/><line x1="566" y1="265" x2="566" y2="275"/><line x1="590" y1="265" x2="590" y2="275"/></g>
+          <!-- B stops 11:05 -->
+          <path class="ln" d="M603 266 l8 8 M611 266 l-8 8"/><text class="sm" x="618" y="274">stopped: no OPFS in Safari 15</text>
+          <!-- A: reviewer 11:20, proposal 11:40, waits on you 11:52 → now -->
+          <line class="ln dash" x1="660" y1="220" x2="660" y2="320"/>
+          <line class="ln" x1="660" y1="320" x2="760" y2="320"/>
+          <circle class="f-ink" cx="660" cy="320" r="3"/><circle class="f-card" cx="760" cy="320" r="3.5"/>
+          <path class="msg" d="M706 316 Q 716 262 724 224"/><circle class="f-gold" cx="724" cy="223" r="2.2"/>
+          <text class="sm t-gold" x="668" y="336">two issues</text>
+          <rect class="f-green" x="736" y="216" width="8" height="8"/><text class="sm" x="726" y="208">P-0431</text>
+          <line class="rest" x1="764" y1="220" x2="794" y2="220"/>
+          <rect class="f-red livep" x="790" y="216" width="8" height="8" transform="rotate(45 794 220)"/>
+
+          <!-- everything after the playhead is still to come -->
+          <rect class="veil" x="532" y="22" width="353" height="330"/>
+          <line class="now" x1="794" y1="22" x2="794" y2="350"/><text class="sm t-red" x="800" y="34">now</text>
+          <!-- playhead at 10:42 -->
+          <line class="head-ln" x1="530.5" y1="22" x2="530.5" y2="350"/>
+          <path class="f-ink" d="M524 22 h13 l-6.5 9 z"/>
+          <text class="lab" x="540" y="34">10:42</text>
+          <circle class="sel" cx="517" cy="120" r="9"/>
+        </svg>
+        <p class="reading">By 10:42 one question had been answered, after fourteen minutes; an explorer had reported back; and two attempts had just set out from the same memory. <span class="faint">$0.92 spent.</span></p>
+        <div class="legend">
+          <span><svg viewBox="0 0 26 10"><path d="M1 5 H25 M1 8 H25" stroke="currentColor" fill="none"/></svg>forked: same memory</span>
+          <span><svg viewBox="0 0 26 10"><path d="M1 5 H25" stroke="currentColor" stroke-dasharray="3 3" fill="none"/></svg>reads the same worktree</span>
+          <span><svg viewBox="0 0 26 10"><path d="M1 9 Q13 -4 25 9" stroke="var(--gold)" fill="none"/></svg>told</span>
+          <span><i class="mk wait"></i>waiting on you, and for how long</span>
+          <span><i class="mk prop"></i>proposed or landed</span>
+        </div>
+      </div>
+
+      <aside class="sc-side">
+        <div class="cap">At the playhead · 10:42</div>
+        <h4>Just forked twice from message 14</h4>
+        <p class="muted">Both attempts start with everything the session knew, and with its working tree as it stood, uncommitted edits included.</p>
+        <div class="cap">The commission to A</div>
+        <div class="letter">Keep the queue in IndexedDB. One transaction per batch, not per write. It must survive the tab being killed mid-flush.</div>
+        <dl class="terms">
+          <dt>to</dt><dd>codex</dd>
+          <dt>reads</dt><dd><span class="ref code">sync/queue.ts</span> <span class="ref nt">replay in made order</span></dd>
+          <dt>may spend</dt><dd>$1.50 or 20 minutes</dd>
+          <dt>returns</dt><dd>a proposal</dd>
+          <dt>answers to</dt><dd>Offline queue, then you</dd>
+        </dl>
+        <div class="acts"><span class="btn dark">Fork again from here</span><span class="btn q">Open A</span></div>
+      </aside>
+
+      <div class="scrub">
+        <span><b>10:42</b> · an hour and twenty minutes ago</span>
+        <span class="faint grow">The transcript, the diff and the tree all show this moment while the playhead is here.</span>
+        <span class="btn">Return to now <kbd>esc</kbd></span>
+      </div>
+    </div>
+  </div>
+
+  <aside class="notes">
+    <div class="num">II</div>
+    <h2>The Score</h2>
+    <p class="lede">A piece of work drawn the way music is: one staff per session, time running left to right. Lineage, delegation and waiting become shapes you can read at a glance.</p>
+    <div><h3>What it breaks with</h3><ul>
+      <li>A tree view shows who started whom and nothing else. Here the three relations are three different lines.</li>
+      <li>Your own delay is on the page. Every red rest is time an agent spent waiting for you.</li>
+      <li>The playhead moves. Because state is a fold of the log, dragging it back shows the whole app as it was.</li>
+    </ul></div>
+    <div><h3>Built from</h3><ul>
+      <li><b>Staves and marks</b> come from a small <code>marks</code> projection: one row per turn end, question, answer, proposal and merge.</li>
+      <li><b>Lines between staves</b> are rows of the links projection: <code>forked-from</code>, <code>workspace-from</code>, <code>spawned-by</code>.</li>
+      <li><b>The commission</b> is the spawn call's own arguments, kept on the edge.</li>
+      <li><b>Fork again from here</b> is the per-turn checkpoint plus a native fork.</li>
+    </ul></div>
+    <div><h3>Jank check</h3><ul>
+      <li>One SVG, a few hundred marks for a day of work. Windowed by time, so a month scrolls the same.</li>
+      <li>Scrubbing refolds only the session on screen, from the nearest checkpoint.</li>
+    </ul></div>
+    <p class="next">Next: <a href="#v3">The Gloss ›</a></p>
+  </aside>
+</div></section>
+
+<!-- ═══════════ III. GLOSS ═══════════ -->
+<section class="view" id="v3"><div class="stage">
+  <div class="win">
+    <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · server/auth/session.ts</span><span class="r">⌥G gloss</span></div>
+    <div class="gl-h"><span>server/auth/session.ts</span><span class="faint">main · a1c09e</span><span class="grow"></span><span>four hands · one of them yours</span></div>
+    <div class="gl">
+      <!-- hands (left margin) -->
+      <div class="hand" style="grid-row:1/6"><b>Opaque session IDs</b><small>claude · Sep 14</small></div>
+      <div class="hand" style="grid-row:6/8"><b>Rate-limit login</b><small>claude · Nov 3</small></div>
+      <div class="hand you" style="grid-row:8/10"><b>by hand</b><small>you · Oct 2</small></div>
+      <div class="hand on" style="grid-row:10/14"><b>Rotate session tokens</b><small>claude · Tue · CP-48</small></div>
+      <div class="hand" style="grid-row:14/16"><b>Opaque session IDs</b><small>claude · Sep 14</small></div>
+
+      <!-- code -->
+      <span class="n" style="grid-row:1">17</span><span class="c" style="grid-row:1"><span class="cm">// Sessions are opaque IDs; state lives in Postgres.</span></span>
+      <span class="n" style="grid-row:2">18</span><span class="c" style="grid-row:2"></span>
+      <span class="n" style="grid-row:3">19</span><span class="c" style="grid-row:3"><span class="kw">export async function</span> verifySession(req: Req) {</span>
+      <span class="n" style="grid-row:4">20</span><span class="c" style="grid-row:4">  <span class="kw">const</span> sid = req.cookies.sid;</span>
+      <span class="n" style="grid-row:5">21</span><span class="c" style="grid-row:5">  <span class="kw">if</span> (!sid) <span class="kw">throw</span> unauthorized();</span>
+      <span class="n" style="grid-row:6">22</span><span class="c" style="grid-row:6">  <span class="cm">// before any password work</span></span>
+      <span class="n" style="grid-row:7">23</span><span class="c" style="grid-row:7">  <span class="kw">await</span> limits.check(req.ip, sid);</span>
+      <span class="n" style="grid-row:8">24</span><span class="c" style="grid-row:8">  <span class="kw">const</span> s = <span class="kw">await</span> sessions.get(sid);</span>
+      <span class="n" style="grid-row:9">25</span><span class="c" style="grid-row:9">  <span class="kw">if</span> (!s) <span class="kw">throw</span> unauthorized();</span>
+      <span class="n" style="grid-row:10">26</span><span class="c s" style="grid-row:10">  <span class="cm">// a demoted admin must not keep an admin session</span></span>
+      <span class="n" style="grid-row:11">27</span><span class="c s" style="grid-row:11">  <span class="kw">if</span> (s.rotatedAt &lt; s.privilegeChangedAt) {</span>
+      <span class="n" style="grid-row:12">28</span><span class="c s" style="grid-row:12">    <span class="kw">return</span> rotate(s, req);</span>
+      <span class="n" style="grid-row:13">29</span><span class="c s" style="grid-row:13">  }</span>
+      <span class="n" style="grid-row:14">30</span><span class="c" style="grid-row:14">  <span class="kw">return</span> s;</span>
+      <span class="n" style="grid-row:15">31</span><span class="c" style="grid-row:15">}</span>
+
+      <!-- glosses (right margin) -->
+      <div class="gloss g" style="grid-row:6/10"><span class="cap">Drifted</span>The request-lifecycle page was drawn before this line and doesn't mention it.</div>
+      <div class="gloss" style="grid-row:10/14"><span class="cap">Asked for</span><q>A demoted admin keeps their old session. Rotate it the moment privileges change.</q><span class="faint">Tomas, message 3</span></div>
+      <div class="gloss r" style="grid-row:14/17"><span class="cap">Unsettled</span>Should rotation sign out the other devices too? Open three days.</div>
+    </div>
+
+    <div class="ask">
+      <div class="qline"><span class="cap">Ask the author</span><em>Why compare timestamps instead of bumping a version counter?</em><span class="btn q">Ask <kbd>↵</kbd></span></div>
+      <p class="ans">I weighed a counter at <span class="ref ss">message 17</span>. <code>privilegeChangedAt</code> was already on the row and is written in the same transaction as the role change, so comparing it needed no schema change, and you had said no migrations that week (<span class="ref ss">message 9</span>). If you add a counter later, line 27 is the only reader.</p>
+      <div class="prov"><span>answered by a copy of <i>Rotate session tokens</i> as it stood at message 22</span><span>the session itself was not woken</span><span class="mono">6 s · $0.04</span><span class="grow"></span><span class="btn q">Keep as a note</span></div>
+    </div>
+  </div>
+
+  <aside class="notes">
+    <div class="num">III</div>
+    <h2>The Gloss</h2>
+    <p class="lede">Code laid out like a glossed manuscript. The left margin says whose hand wrote each passage. The right margin holds what was asked, decided and left open. Below, you can question the author.</p>
+    <div><h3>What it breaks with</h3><ul>
+      <li>Blame names a commit. This names the session, the request behind it, and which lines a person wrote.</li>
+      <li>Code review assumes the author is gone. Here the author can be asked, with everything it knew at the time.</li>
+      <li>Answers don't spend the original session's context. A throwaway copy replies and is archived.</li>
+    </ul></div>
+    <div><h3>Built from</h3><ul>
+      <li><b>Hands</b>: blame gives the commit; the <code>produced</code> link gives the session; a commit with no session is yours.</li>
+      <li><b>Glosses</b> are backlinks to the line range, ordered: open questions, decisions, then mentions.</li>
+      <li><b>Ask the author</b> is ask-a-fork (§11.4), started from a code range instead of a session id.</li>
+    </ul></div>
+    <div><h3>Jank check</h3><ul>
+      <li>Blame is computed once per file and commit, then cached. Margins are fetched for visible lines only.</li>
+      <li>A fork takes seconds to answer. The question stays editable and the answer streams in beneath it.</li>
+    </ul></div>
+    <p class="next">Next: <a href="#v4">The Desk ›</a></p>
+  </aside>
+</div></section>
+
+<!-- ═══════════ IV. DESK ═══════════ -->
+<section class="view" id="v4"><div class="stage">
+  <div class="duo">
+    <div class="win">
+      <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · the desk</span><span class="r">four things · about six minutes</span></div>
+      <div class="desk">
+        <div class="stack">
+          <div class="cap">In order of what waits behind</div>
+          <div class="slip on">Replay in made order, or server order?<small><span class="wt"><i></i><i></i><i></i></span> three wait behind it</small></div>
+          <div class="slip">May it run <code>pnpm db:reset</code> in its worktree?<small><span class="wt"><i></i></span> one waits</small></div>
+          <div class="slip">P-0431 is ready to read<small><i class="mk prop"></i> one doubt</small></div>
+          <div class="slip">Fork B stopped. Keep it or let it go?<small>nothing waits</small></div>
+          <div class="after">Then nothing needs you. Five are at work.</div>
+        </div>
+        <div class="card-area">
+          <div class="dcard">
+            <div class="from"><i class="mk wait"></i><span>claude in <i>Offline queue survives restart</i></span><span class="grow"></span><span class="w">waiting 14 min</span></div>
+            <h3>Replay queued writes in the order they were made, or in the order the server would have accepted them?</h3>
+            <p class="ctx">Made order is simpler and matches what the person saw on screen. Server order stops one rejected write from blocking those behind it, but notes can briefly appear out of sequence. See <span class="ref code">sync/replay.ts#L41-48</span></p>
+            <p class="lean">I would choose made order, and flag a rejected write instead of stopping at it.</p>
+            <div class="opts">
+              <div class="opt on"><kbd>1</kbd>Made order; flag rejected writes<small>its lean</small></div>
+              <div class="opt"><kbd>2</kbd>Server order</div>
+              <div class="opt"><kbd>3</kbd><span class="faint"><i>Say something else…</i></span></div>
+            </div>
+            <div class="behind"><span class="cap">Held up behind this</span>
+              <span>Fork A is idle · the reviewer of A is idle · CP-63 cannot start</span></div>
+            <div class="keys"><span>↵ answer, next</span><span>⇥ later</span><span>space look closer</span><span>⌘↵ answer and keep as a decision</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="phone">
+      <span class="notch"></span>
+      <div class="from"><span>1 of 4 · Offline queue</span><span style="color:var(--red)">14 min</span></div>
+      <h4>Replay queued writes in made order, or server order?</h4>
+      <p>Made order matches what the person saw. Server order avoids one bad write blocking the rest.</p>
+      <p class="lean" style="font-size:12.5px; color:var(--gold); border-left:1px solid var(--gold); padding-left:8px">Its lean: made order, flag rejects.</p>
+      <div class="opt on">Made order</div>
+      <div class="opt">Server order</div>
+      <div class="opt"><span class="faint"><i>Dictate an answer…</i></span></div>
+      <span class="foot">three wait behind this · swipe for later</span>
+    </div>
+  </div>
+
+  <aside class="notes">
+    <div class="num">IV</div>
+    <h2>The Desk</h2>
+    <p class="lede">One thing in front of you at a time, chosen by what is held up behind it. The same card on the phone, so a queue can be cleared in the time it takes to wait for coffee.</p>
+    <div><h3>What it breaks with</h3><ul>
+      <li>An inbox is ordered by arrival. This is ordered by cost of delay: how much idle work each answer releases.</li>
+      <li>You never open a transcript to answer. The agent must bring the question, the trade-off and its own lean to the card.</li>
+      <li>It ends. "Nothing needs you" is a state the app wants you to reach, not an empty list to refill.</li>
+    </ul></div>
+    <div><h3>Built from</h3><ul>
+      <li><b>The queue</b> is pending questions, permissions and proposals: three existing event kinds in one view.</li>
+      <li><b>What waits behind</b> walks the links projection outward from the asking session: its children, its readers, tickets marked <code>blocks</code>.</li>
+      <li><b>Record as a decision</b> writes a note and links it to the code the question cited.</li>
+    </ul></div>
+    <div><h3>Jank check</h3><ul>
+      <li>One card rendered. The next is prefetched, so ↵ is a swap, not a load.</li>
+      <li>The phone gets rows of one view and no transcript at all.</li>
+    </ul></div>
+    <p class="next">Next: <a href="#v5">The Lens ›</a></p>
+  </aside>
+</div></section>
+
+<!-- ═══════════ V. LENS ═══════════ -->
+<section class="view" id="v5"><div class="stage">
+  <div class="win">
+    <div class="tb"><span class="lights"><i></i><i></i><i></i></span><span class="ttl"><b>Atelier</b> · P-0431 · Offline queue survives restart</span><span class="r">− + depth</span></div>
+    <div class="lens">
+      <div class="ladder">
+        <div class="rung"><b>Intent</b><small>1 sentence</small></div>
+        <div class="rung on"><b>Claims</b><small>5 · 1 doubted</small></div>
+        <div class="rung"><b>Parts</b><small>9 files</small></div>
+        <div class="rung"><b>Lines</b><small>+310 −22</small></div>
+        <p class="hint">Scroll or pinch to change depth. A claim opens in place; you never leave the page.</p>
+      </div>
+      <div class="pr">
+        <div class="pr-h">
+          <span class="cap">Proposal · from A · queue in IndexedDB · codex</span>
+          <h3>Writes made offline survive a restart and replay in the order you made them.</h3>
+          <div class="meta"><span>for CP-61</span><span>serves the present intent</span><span>reviewed by a second agent: two issues, both fixed</span><span class="mono">58 min · $1.34</span></div>
+        </div>
+
+        <div>
+          <div class="claim"><span class="no">1</span><span class="say">A write made offline is still queued after the app is killed and relaunched.</span><span class="depth"><i class="d"></i><i class="d"></i><i class="d"></i> read</span>
+            <span class="ev"><span class="ok">✓ 12 tests</span><span class="ok">✓ killed and relaunched 200 times</span></span></div>
+
+          <div class="claim"><span class="no">2</span><span class="say">Replay keeps the order you made them. A rejected write is flagged, not dropped.</span><span class="depth"><i class="d"></i><i class="d"></i><i></i> open</span>
+            <span class="ev"><span class="ok">✓ property test, 1,000 runs</span><span>follows <span class="ref nt">replay in made order</span></span></span>
+            <div class="parts">
+              <div class="part"><span>sync/queue.ts</span><span class="grow"></span><span class="add">+84</span><em>read</em></div>
+              <div class="part"><span>sync/replay.ts</span><span class="grow"></span><span class="add">+41</span><span class="del">−6</span><em>open</em></div>
+              <div class="hunk"><div> for (const w of queue.inMadeOrder()) {</div><div class="d">   await send(w);</div><div class="a">   const r = await send(w);</div><div class="a">   if (r.rejected) { flag(w, r.reason); continue; }</div><div>   queue.done(w);</div><div> }</div></div>
+              <div class="part"><span>sync/replay.test.ts</span><span class="grow"></span><span class="add">+120</span><em>tests; no need to read</em></div>
+            </div></div>
+
+          <div class="claim doubt"><span class="no">3</span><span class="say">Nothing is sent twice.</span><span class="depth"><i></i><i></i><i></i> unread</span>
+            <span class="ev"><span class="ok">✓ idempotency test</span></span>
+            <p class="dbt">I am not sure of this one. The key is reused after a timeout only if the tab survived. If the tab dies between send and acknowledgement, the write may go twice. See <span class="ref code">sync/queue.ts#L61</span></p></div>
+
+          <div class="claim"><span class="no">4</span><span class="say">Ten thousand queued notes take under 5 MB.</span><span class="depth"><i class="d"></i><i></i><i></i> skimmed</span>
+            <span class="ev"><span class="ok">✓ measured 3.1 MB</span></span></div>
+
+          <div class="claim"><span class="no">5</span><span class="say">The server is unchanged.</span><span class="depth"><i class="d"></i><i></i><i></i> skimmed</span>
+            <span class="ev"><span class="chk">checked by Atelier: no file under server/ is touched</span></span></div>
+        </div>
+
+        <div class="verdict">
+          <span class="say">You have read two claims to the line. The one doubt is unread.</span>
+          <span class="btn dark">Read the doubt <kbd>↵</kbd></span><span class="btn">Accept the four it is sure of</span><span class="btn q">Send back…</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="notes">
+    <div class="num">V</div>
+    <h2>The Lens</h2>
+    <p class="lede">Review by depth, not by file. A change is a short list of things the agent claims are true. Each carries its evidence and opens down to the lines that make it so.</p>
+    <div><h3>What it breaks with</h3><ul>
+      <li>A diff gives every line the same weight. Here attention goes first to what the author doubts.</li>
+      <li>"Approved" hides how much was read. The gauge beside each claim records how deep you actually went.</li>
+      <li>Acceptance is by claim. Four sure claims can land while the doubted one goes back.</li>
+      <li>Some claims are checked by the app, not asserted by the agent, and are marked differently.</li>
+    </ul></div>
+    <div><h3>Built from</h3><ul>
+      <li><b>Claims</b> are the proposal file's parts, each one its own commit, each written as a sentence.</li>
+      <li><b>Evidence</b> links to the tool call that produced it, so "12 tests" opens the run.</li>
+      <li><b>Depth</b> is a per-reader event when a part or hunk is opened: your own reading is in the log too.</li>
+    </ul></div>
+    <div><h3>Jank check</h3><ul>
+      <li>Five rows until you open one. Hunks are fetched and highlighted on open, never before.</li>
+      <li>Changing depth swaps what a row shows; rows are not re-created.</li>
+    </ul></div>
+    <p class="next">Back to: <a href="#v1">The Frontispiece ›</a></p>
+  </aside>
+</div></section>
+
+</main>
+</div>
+</body>
+</html>

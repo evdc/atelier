@@ -1,0 +1,37 @@
+# Builds the Linux server binaries that scripts/install-server.sh downloads. Push a tag like v0.1.0 to publish.
+# Built on the oldest Ubuntu runner so the binary runs on the glibc of common VPS images (Debian 12, Ubuntu 22.04+).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  server:
+    name: atelierd (${{ matrix.target }})
+    strategy:
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p atelier-server --locked
+      - name: Package
+        run: tar -C target/release -czf atelierd-${{ matrix.target }}.tar.gz atelierd
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" atelierd-${{ matrix.target }}.tar.gz --clobber

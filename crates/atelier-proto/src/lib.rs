@@ -161,6 +161,23 @@ pub enum Call {
     /// already copied) into the log. Only runs when asked. Result: [`Imported`].
     #[serde(rename = "project.import")]
     ProjectImport { project: ProjectId },
+    /// Set a ticket's `status:` in `.atelier/tickets/<ticket>.md` (`ticket` is the id, the filename stem).
+    /// `expect` is the status the client last saw: if the file says otherwise the call is refused and
+    /// nothing is written. Result: none.
+    #[serde(rename = "ticket.update")]
+    TicketUpdate {
+        project: ProjectId,
+        ticket: String,
+        status: String,
+        #[serde(default)]
+        #[ts(optional)]
+        expect: Option<String>,
+    },
+    /// Replace a project's board config (`.atelier/board.json`). Refused if it has problems, so the UI
+    /// shows them rather than writing a half-fixed file. Keys the file has and `config` doesn't are kept.
+    /// Result: none.
+    #[serde(rename = "board.update")]
+    BoardUpdate { project: ProjectId, config: BoardConfig },
     /// Directories inside `path` on the server (default: its user's home), for
     /// the add-project picker. Result: [`DirListing`].
     #[serde(rename = "fs.list")]
@@ -181,9 +198,12 @@ pub enum Call {
 
 impl Call {
     /// Whether an agent (through the MCP server) may make this call. Removing projects and browsing the
-    /// server's filesystem are for the person at the keyboard.
+    /// server's filesystem are for the person at the keyboard. An agent edits its board's file directly.
     pub fn agent_allowed(&self) -> bool {
-        !matches!(self, Call::ProjectRemove { .. } | Call::FsList { .. } | Call::FsSuggest {})
+        !matches!(
+            self,
+            Call::ProjectRemove { .. } | Call::FsList { .. } | Call::FsSuggest {} | Call::BoardUpdate { .. }
+        )
     }
 }
 
@@ -350,6 +370,10 @@ pub enum ViewName {
     Sessions,
     /// Rows: [`UsageRow`], at most one. Unscoped.
     Usage,
+    /// Rows: [`TicketRow`]. Scope: project id.
+    Tickets,
+    /// Rows: [`BoardRow`], one per project (defaults if it has no `board.json`). Scope: project id.
+    Board,
 }
 
 impl ViewName {
@@ -358,6 +382,8 @@ impl ViewName {
             ViewName::Projects => "projects",
             ViewName::Sessions => "sessions",
             ViewName::Usage => "usage",
+            ViewName::Tickets => "tickets",
+            ViewName::Board => "board",
         }
     }
 }
@@ -414,6 +440,34 @@ impl SessionStatus {
     }
 }
 
+/// One ticket file. Free-form strings throughout: which statuses exist is project configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TicketRow {
+    /// `<project>/<path>`: what patches' `remove` lists carry. (`id` is only unique within a project.)
+    pub key: String,
+    pub project: ProjectId,
+    /// Relative to the project root, e.g. `.atelier/tickets/AT-036.md`.
+    pub path: String,
+    /// The filename stem, whatever the front matter says.
+    pub id: String,
+    pub title: String,
+    /// Verbatim and trimmed; `""` when the ticket has none.
+    pub status: String,
+    pub size: String,
+    pub milestone: String,
+    pub area: String,
+    pub depends: Vec<String>,
+    /// `- [x]` items and all checklist items in the body.
+    pub checks_done: u32,
+    pub checks_total: u32,
+    /// Something the file got wrong (bad front matter, id mismatch); shown as a quiet warning.
+    #[ts(optional)]
+    pub problem: Option<String>,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SessionRow {
@@ -463,4 +517,47 @@ pub struct LimitWindow {
     /// Unix milliseconds when the window resets, when reported.
     #[ts(type = "number | null")]
     pub resets_at: Option<i64>,
+}
+
+/// A project's board config (`.atelier/board.json`), effective: the file's contents once validated, or defaults.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BoardConfig {
+    /// Every known status, in the order a status picker offers them.
+    #[serde(default)]
+    pub statuses: Vec<String>,
+    #[serde(default)]
+    pub columns: Vec<BoardColumn>,
+    /// Keys this version doesn't know, kept so a rewrite doesn't drop a newer client's additions.
+    #[serde(flatten)]
+    #[ts(skip)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BoardColumn {
+    pub title: String,
+    /// Tickets whose status is in here are shown in this column. Dropping a ticket here sets the first one.
+    #[serde(default)]
+    pub statuses: Vec<String>,
+    /// Rendered narrow by default.
+    #[serde(default)]
+    pub collapsed: bool,
+    #[serde(flatten)]
+    #[ts(skip)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// Rows: one per project. The view answers for every project, with defaults where there is no file.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BoardRow {
+    /// The project (the row key and the watch scope).
+    pub id: ProjectId,
+    pub config: BoardConfig,
+    /// What was fixed or ignored while validating the file, one line each. Empty for defaults.
+    pub problems: Vec<String>,
+    /// Whether `.atelier/board.json` exists in the project.
+    pub from_file: bool,
 }

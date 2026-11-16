@@ -1,5 +1,6 @@
 import { For, Show } from "solid-js";
 import { href, route } from "../lib/router";
+import { ticketCount } from "../lib/tickets";
 import { sidebarOpen, toggleSidebar } from "../lib/layout";
 import { useApp } from "./context";
 
@@ -7,7 +8,7 @@ export function Sidebar() {
   const { projects } = useApp();
   const current = () => {
     const r = route();
-    return r.name === "sessions" ? r.project : null;
+    return r.name === "sessions" || r.name === "tickets" ? r.project : null;
   };
   const project = () => (current() ? projects.get(current()!) : undefined);
 
@@ -50,9 +51,15 @@ export function Sidebar() {
           {(p) => (
             <>
               <div class="grp cap">Views</div>
-              <a class="it on" href={href({ name: "sessions", project: p().id })}>
+              <a class="it" classList={{ on: route().name === "sessions" }} href={href({ name: "sessions", project: p().id })}>
                 <span>Sessions</span>
                 <span class="n">{p().sessions}</span>
+              </a>
+              <a class="it" classList={{ on: route().name === "tickets" }} href={href({ name: "tickets", project: p().id })}>
+                <span>Tickets</span>
+                <Show when={ticketCount() !== null}>
+                  <span class="n">{ticketCount()}</span>
+                </Show>
               </a>
             </>
           )}

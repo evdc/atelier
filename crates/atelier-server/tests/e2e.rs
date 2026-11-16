@@ -1280,3 +1280,295 @@ async fn a_message_to_a_busy_session_waits_for_its_turn() {
     assert_eq!(kinds, ["cc.assistant", "agent.message", "turn.ended", "cc.assistant"]);
     app.supervisor.shutdown().await;
 }
+
+fn file_events(c: &Client) -> Vec<Value> {
+    c.seen
+        .iter()
+        .filter(|m| m["t"] == "events")
+        .flat_map(|m| m["events"].as_array().unwrap().clone())
+        .filter(|e| e["kind"] == "file.changed")
+        .collect()
+}
+
+/// Read frames until the sub has seen at least `n` file events, then return them all.
+async fn file_events_reaching(c: &mut Client, n: usize) -> Vec<Value> {
+    while file_events(c).len() < n {
+        c.until(|m| m["t"] == "events").await;
+    }
+    file_events(c)
+}
+
+/// Nothing more arrives for a while (the watcher debounces at 100 ms).
+async fn settle(c: &mut Client) {
+    while tokio::time::timeout(Duration::from_millis(700), c.until(|m| m["t"] == "events")).await.is_ok() {}
+}
+
+#[tokio::test]
+async fn atelier_files_become_events() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let tickets = repo.join(".atelier/tickets");
+    std::fs::create_dir_all(&tickets).unwrap();
+    let ticket = tickets.join("X.md");
+    std::fs::write(&ticket, "one").unwrap();
+    std::fs::write(tickets.join(".hidden"), "skip me").unwrap();
+
+    let config = Config {
+        home: tmp.path().join("home"),
+        listen: "127.0.0.1:0".parse().unwrap(),
+        listen_tailscale: false,
+        tailscale_bin: "false".into(),
+        claude_bin: FAKE.into(),
+        claude_home: tmp.path().join("claude"),
+        idle_timeout: Duration::from_secs(600),
+        auto_title: false,
+        spawn: Default::default(),
+        token: Some("secret".into()),
+    };
+    std::fs::create_dir_all(&config.home).unwrap();
+    let serve = |app: &App| {
+        let app = app.clone();
+        async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(axum::serve(listener, app.router()).into_future());
+            addr
+        }
+    };
+
+    let app = App::start(config.clone()).await.unwrap();
+    let mut c = Client::connect(serve(&app).await, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    let stream = format!("p/{}", project.as_str().unwrap());
+    c.send(json!({"t": "sub", "id": 1, "filter": {"stream": stream}, "from": 1})).await;
+
+    // Added: the existing file arrives with its text; the hidden one doesn't.
+    let evs = file_events_reaching(&mut c, 1).await;
+    assert_eq!(
+        (evs[0]["body"]["path"].as_str(), evs[0]["body"]["text"].as_str()),
+        (Some(".atelier/tickets/X.md"), Some("one"))
+    );
+    assert_eq!(evs[0]["actor"], "atelier");
+
+    // Edited: exactly one more event.
+    std::fs::write(&ticket, "two").unwrap();
+    let evs = file_events_reaching(&mut c, 2).await;
+    settle(&mut c).await;
+    assert_eq!(file_events(&c).len(), 2);
+    assert_eq!(evs[1]["body"]["text"], "two");
+
+    // A burst of writes coalesces; the last event has the final content.
+    for i in 0..20 {
+        std::fs::write(&ticket, format!("burst {i}")).unwrap();
+    }
+    file_events_reaching(&mut c, 3).await;
+    settle(&mut c).await;
+    let evs = file_events(&c);
+    assert!(evs.len() <= 8, "{} events for one burst", evs.len());
+    assert_eq!(evs.last().unwrap()["body"]["text"], "burst 19");
+
+    // A new file in a new directory (as `git pull` would bring).
+    let n = evs.len();
+    std::fs::create_dir_all(repo.join(".atelier/notes")).unwrap();
+    std::fs::write(repo.join(".atelier/notes/n.md"), "note").unwrap();
+    let evs = file_events_reaching(&mut c, n + 1).await;
+    assert_eq!(evs.last().unwrap()["body"]["path"], ".atelier/notes/n.md");
+
+    // Deleted: text is null.
+    std::fs::remove_file(&ticket).unwrap();
+    let evs = file_events_reaching(&mut c, n + 2).await;
+    assert_eq!(evs.last().unwrap()["body"], json!({"path": ".atelier/tickets/X.md", "text": null}));
+    settle(&mut c).await;
+    let total = file_events(&c).len();
+
+    // Restart with nothing changed: no new events.
+    let _ = app.stopping.send(true);
+    drop(c);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let app = App::start(config.clone()).await.unwrap();
+    let mut c = Client::connect(serve(&app).await, "secret").await;
+    c.send(json!({"t": "sub", "id": 1, "filter": {"stream": stream}, "from": 1})).await;
+    c.until(|m| m["t"] == "live").await;
+    assert_eq!(file_events(&c).len(), total);
+
+    // Edit while stopped: the restart appends exactly one event.
+    let _ = app.stopping.send(true);
+    drop(c);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    std::fs::write(repo.join(".atelier/notes/n.md"), "note, edited").unwrap();
+    let app = App::start(config).await.unwrap();
+    let mut c = Client::connect(serve(&app).await, "secret").await;
+    c.send(json!({"t": "sub", "id": 1, "filter": {"stream": stream}, "from": 1})).await;
+    c.until(|m| m["t"] == "live").await;
+    assert_eq!(file_events(&c).len(), total + 1);
+    assert_eq!(file_events(&c).last().unwrap()["body"]["text"], "note, edited");
+}
+
+#[tokio::test]
+async fn tickets_view_follows_files_on_disk() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let tickets = repo.join(".atelier/tickets");
+    std::fs::create_dir_all(&tickets).unwrap();
+    let ticket = tickets.join("AT-1.md");
+    let text = |status: &str| format!("---\nid: AT-1\ntitle: \"One: `x`\"\nstatus: {status}\n---\n- [ ] a\n");
+    std::fs::write(&ticket, text("open")).unwrap();
+    std::fs::write(tickets.join("README.md"), "# Tickets").unwrap();
+
+    let config = Config {
+        home: tmp.path().join("home"),
+        listen: "127.0.0.1:0".parse().unwrap(),
+        listen_tailscale: false,
+        tailscale_bin: "false".into(),
+        claude_bin: FAKE.into(),
+        claude_home: tmp.path().join("claude"),
+        idle_timeout: Duration::from_secs(600),
+        auto_title: false,
+        spawn: Default::default(),
+        token: Some("secret".into()),
+    };
+    std::fs::create_dir_all(&config.home).unwrap();
+    let app = App::start(config).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(listener, app.router()).into_future());
+    let mut c = Client::connect(addr, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+
+    c.send(json!({"t": "watch", "id": 2, "view": "tickets", "scope": project})).await;
+    // The initial scan may land before or after the snapshot; either way the row shows up.
+    let has_row = |m: &Value, status: &str| {
+        m["watch"] == 2
+            && ["rows", "upsert"].iter().any(|k| {
+                m[k].as_array().is_some_and(|rs| rs.iter().any(|r| r["id"] == "AT-1" && r["status"] == status))
+            })
+    };
+    let m = c.until(|m| has_row(m, "open")).await;
+    let row = m["rows"].as_array().or(m["upsert"].as_array()).unwrap().iter().find(|r| r["id"] == "AT-1").unwrap();
+    assert_eq!((row["title"].as_str(), row["checks_total"].as_u64()), (Some("One: `x`"), Some(1)));
+    assert!(!c.seen.iter().any(|m| m["watch"] == 2 && m.to_string().contains("README")));
+
+    std::fs::write(&ticket, text("in progress")).unwrap();
+    c.until(|m| has_row(m, "in progress")).await;
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn board_config_is_watched_from_its_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(repo.join(".atelier")).unwrap();
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    let project = project.as_str().unwrap();
+
+    // No file: the defaults, one row for the project.
+    c.send(json!({"t": "watch", "id": 2, "view": "board", "scope": project})).await;
+    let snap = c.until(|m| m["t"] == "snapshot" && m["watch"] == 2).await;
+    let rows = snap["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["from_file"], false);
+    assert_eq!(rows[0]["config"]["statuses"], json!(["open", "in-progress", "done"]));
+    assert_eq!(rows[0]["config"]["columns"].as_array().unwrap().len(), 3);
+
+    // Written: a patch with the new columns.
+    let text = r#"{"statuses": ["open", "review"], "columns": [
+        {"title": "To do", "statuses": ["open"]}, {"title": "Review", "statuses": ["review"], "collapsed": true}]}"#;
+    std::fs::write(repo.join(".atelier/board.json"), text).unwrap();
+    let patch = c.until(|m| m["t"] == "patch" && m["watch"] == 2).await;
+    let row = &patch["upsert"][0];
+    assert_eq!((row["id"].as_str(), row["from_file"].as_bool()), (Some(project), Some(true)));
+    assert_eq!(row["config"]["columns"][1]["title"], "Review");
+    assert_eq!(row["config"]["columns"][1]["collapsed"], true);
+    assert_eq!(row["problems"], json!([]));
+
+    // Deleted: back to the defaults.
+    std::fs::remove_file(repo.join(".atelier/board.json")).unwrap();
+    let patch = c.until(|m| m["t"] == "patch" && m["watch"] == 2 && m["upsert"][0]["from_file"] == false).await;
+    assert_eq!(patch["upsert"][0]["config"]["statuses"], json!(["open", "in-progress", "done"]));
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn ticket_update_writes_the_file_and_refuses_a_stale_expect() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let tickets = repo.join(".atelier/tickets");
+    std::fs::create_dir_all(&tickets).unwrap();
+    let ticket = tickets.join("AT-1.md");
+    let open = "---\nid: AT-1\ntitle: \"One\"\nstatus: open\n---\n- [ ] a\n";
+    let review = open.replace("status: open", "status: review");
+    std::fs::write(&ticket, open).unwrap();
+
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    let pid = project.as_str().unwrap().to_owned();
+    c.send(json!({"t": "watch", "id": 2, "view": "tickets", "scope": project})).await;
+    c.until(|m| m["watch"] == 2 && m.to_string().contains("AT-1")).await;
+
+    let r =
+        c.rpc("ticket.update", json!({"project": pid, "ticket": "AT-1", "status": "review", "expect": "open"})).await;
+    assert_eq!(r, Value::Null);
+    assert_eq!(std::fs::read_to_string(&ticket).unwrap(), review);
+    c.until(|m| m["watch"] == 2 && m.to_string().contains("\"review\"")).await;
+
+    // Someone (an editor, an agent) moved it on since the client looked: refused, file untouched.
+    let err =
+        rpc_err(&mut c, "ticket.update", json!({"project": pid, "ticket": "AT-1", "status": "done", "expect": "open"}))
+            .await;
+    assert!(err.contains("AT-1 is now *review* (changed elsewhere)"), "{err}");
+    assert_eq!(std::fs::read_to_string(&ticket).unwrap(), review);
+
+    // One event for the write, attributed to the person; the watcher's notification adds nothing.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let evs = events_where(&app, &format!("p/{pid}"), |_| true).await;
+    let changed: Vec<_> = evs.iter().filter(|e| e.kind == "file.changed").collect();
+    assert_eq!(changed.len(), 2, "{changed:?}");
+    assert_eq!(changed.iter().filter(|e| e.actor == "user").count(), 1);
+    app.supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn board_update_writes_the_file_and_refuses_problems() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let (app, addr) = boot(tmp.path(), Duration::from_secs(600)).await;
+    let mut c = Client::connect(addr, "secret").await;
+    let project = c.rpc("project.add", json!({"path": repo.to_str().unwrap()})).await["id"].clone();
+    let pid = project.as_str().unwrap().to_owned();
+    c.send(json!({"t": "watch", "id": 2, "view": "board", "scope": project})).await;
+    c.until(|m| m["t"] == "snapshot" && m["watch"] == 2).await;
+
+    let config = json!({"statuses": ["open", "done"], "columns": [
+        {"title": "To do", "statuses": ["open"]}, {"title": "Done", "statuses": ["done"], "collapsed": true}]});
+    let r = c.rpc("board.update", json!({"project": pid, "config": config})).await;
+    assert_eq!(r, Value::Null);
+    let patch = c.until(|m| m["t"] == "patch" && m["watch"] == 2 && m["upsert"][0]["from_file"] == true).await;
+    assert_eq!(patch["upsert"][0]["config"]["columns"][1]["collapsed"], true);
+    assert_eq!(patch["upsert"][0]["problems"], json!([]));
+
+    // A column with no statuses: refused, and the file keeps what it had.
+    let bad = json!({"statuses": ["open"], "columns": [{"title": "Empty", "statuses": []}]});
+    let err = rpc_err(&mut c, "board.update", json!({"project": pid, "config": bad})).await;
+    assert!(err.contains("column `Empty` has no statuses; dropped"), "{err}");
+    let on_disk: Value =
+        serde_json::from_str(&std::fs::read_to_string(repo.join(".atelier/board.json")).unwrap()).unwrap();
+    assert_eq!(on_disk["statuses"], json!(["open", "done"]));
+
+    // A key this server doesn't know, written by a newer client, survives an older client's update.
+    let newer = json!({"statuses": ["open", "done"], "theme": "dark", "columns": [
+        {"title": "To do", "statuses": ["open"], "colour": "gold"}, {"title": "Done", "statuses": ["done"]}]});
+    std::fs::write(repo.join(".atelier/board.json"), newer.to_string()).unwrap();
+    let plain = json!({"statuses": ["open", "done"], "columns": [
+        {"title": "To do", "statuses": ["open"], "collapsed": true}, {"title": "Done", "statuses": ["done"]}]});
+    c.rpc("board.update", json!({"project": pid, "config": plain})).await;
+    let on_disk: Value =
+        serde_json::from_str(&std::fs::read_to_string(repo.join(".atelier/board.json")).unwrap()).unwrap();
+    assert_eq!(on_disk["theme"], "dark");
+    assert_eq!(on_disk["columns"][0]["colour"], "gold");
+    assert_eq!(on_disk["columns"][0]["collapsed"], true);
+    app.supervisor.shutdown().await;
+}

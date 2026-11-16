@@ -67,6 +67,9 @@ export function SessionsView(props: { project: string; session?: string; creatin
       <section class="list">
         <header class="list-h">
           <h2>{project()?.name ?? ""}</h2>
+          <a class="btn quiet" href={href({ name: "tickets", project: props.project })} title="Ticket board">
+            Tickets
+          </a>
           <button
             class="btn quiet"
             disabled={importing()}

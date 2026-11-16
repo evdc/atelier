@@ -1,6 +1,7 @@
-//! `open_path`: hand a directory to the person's own tools. Allowlisted by
+//! `open_path`: hand a directory or file to the person's own tools. Allowlisted by
 //! construction: a fixed set of kinds, each a fixed program, and the path is
-//! only ever passed as an argument to an existing directory.
+//! only ever passed as an argument to an existing directory (or, for the editor
+//! and Finder, an existing file, e.g. a ticket).
 
 use std::path::Path;
 use std::process::Command;
@@ -17,11 +18,15 @@ pub enum Kind {
 
 #[tauri::command]
 pub fn open_path(kind: Kind, path: String) -> Result<(), String> {
-    let dir = Path::new(&path);
-    if !dir.is_absolute() || !dir.is_dir() {
-        return Err(format!("{path} is not a directory on this machine"));
+    let target = Path::new(&path);
+    let file = target.is_file();
+    if !target.is_absolute() || !(file || target.is_dir()) {
+        return Err(format!("{path} is not a file or directory on this machine"));
     }
     let argv: Vec<String> = match kind {
+        Kind::Terminal if file => return Err(format!("{path} is a file; a terminal opens in a directory")),
+        // `open` on a file would launch its default app; reveal it in Finder instead.
+        Kind::Finder if file && cfg!(target_os = "macos") => vec!["open".into(), "-R".into()],
         Kind::Finder => vec![if cfg!(target_os = "macos") { "open" } else { "xdg-open" }.into()],
         Kind::Terminal if cfg!(target_os = "macos") => vec!["open".into(), "-a".into(), "Terminal".into()],
         Kind::Terminal => return Err("opening a terminal isn't supported on this platform yet".into()),
@@ -30,7 +35,7 @@ pub fn open_path(kind: Kind, path: String) -> Result<(), String> {
     let program = &argv[0];
     Command::new(program)
         .args(&argv[1..])
-        .arg(dir)
+        .arg(target)
         .spawn()
         .map(drop)
         .map_err(|e| format!("couldn't run {program}: {e}"))

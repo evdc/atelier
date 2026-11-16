@@ -7,9 +7,13 @@
 //! 2. a row type in `atelier-proto` and a [`ViewName`] variant;
 //! 3. `snapshot`/`row` arms below. Watches then work with no other changes.
 
+pub mod board;
+pub mod files;
+pub mod frontmatter;
 pub mod projects;
 pub mod sessions;
 pub mod text;
+pub mod tickets;
 pub mod usage;
 
 use anyhow::Result;
@@ -20,7 +24,14 @@ use serde_json::Value;
 
 pub fn projections() -> Vec<Box<dyn Projection>> {
     // Order matters only for cross-table reads inside `apply`; none yet.
-    vec![Box::new(projects::Projects), Box::new(sessions::Sessions), Box::new(usage::Usage)]
+    vec![
+        Box::new(projects::Projects),
+        Box::new(sessions::Sessions),
+        Box::new(usage::Usage),
+        Box::new(files::Files),
+        Box::new(tickets::Tickets),
+        Box::new(board::Board),
+    ]
 }
 
 /// All rows of a view (narrowed to `scope`, if given), in display order.
@@ -29,6 +40,11 @@ pub fn snapshot(c: &Connection, view: ViewName, scope: Option<&str>) -> Result<V
         ViewName::Projects => to_values(projects::list(c)?),
         ViewName::Sessions => to_values(sessions::list(c, scope)?),
         ViewName::Usage => to_values(usage::list(c)?),
+        ViewName::Tickets => to_values(tickets::list(c, scope)?),
+        ViewName::Board => to_values(match scope {
+            Some(project) => vec![board::get(c, project)?],
+            None => board::list(c)?,
+        }),
     })
 }
 
@@ -38,6 +54,8 @@ pub fn row(c: &Connection, view: ViewName, key: &str) -> Result<Option<Value>> {
         ViewName::Projects => projects::get(c, key)?.map(to_value),
         ViewName::Sessions => sessions::get(c, key)?.map(to_value),
         ViewName::Usage => usage::list(c)?.into_iter().find(|r| r.id == key).map(to_value),
+        ViewName::Tickets => tickets::get(c, key)?.map(to_value),
+        ViewName::Board => Some(to_value(board::get(c, key)?)),
     })
 }
 

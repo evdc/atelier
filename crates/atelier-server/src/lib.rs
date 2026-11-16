@@ -8,8 +8,10 @@
 //! ```
 
 pub mod autotitle;
+pub mod board;
 pub mod browse;
 pub mod config;
+pub mod files;
 pub mod import;
 pub mod mcp;
 pub mod message;
@@ -48,6 +50,8 @@ pub struct App {
     pub peers: Arc<dyn PeerAuth>,
     /// Serializes `project.import`.
     pub import_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Serializes ingests of `.atelier/` files per project.
+    pub file_locks: Arc<files::Locks>,
 }
 
 impl App {
@@ -65,7 +69,17 @@ impl App {
         supervisor.spawn_reaper(config.idle_timeout);
         let (stopping, _) = tokio::sync::watch::channel(false);
         let peers = Arc::new(tailnet::Tailscale::new(config.tailscale_bin.clone()));
-        Ok(Self { config: Arc::new(config), store, supervisor, stopping, peers, import_lock: Default::default() })
+        let app = Self {
+            config: Arc::new(config),
+            store,
+            supervisor,
+            stopping,
+            peers,
+            import_lock: Default::default(),
+            file_locks: Default::default(),
+        };
+        files::start(&app).await?;
+        Ok(app)
     }
 
     /// For the loopback listener: every client needs the token. Agents reach `/mcp` here with their own

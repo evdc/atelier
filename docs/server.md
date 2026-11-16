@@ -1,5 +1,22 @@
 # Running atelierd
 
+## On a VPS (one command)
+
+On a Linux box that already has Tailscale (`tailscale up` as yourself, not with a tagged key):
+
+```
+curl -fsSL https://raw.githubusercontent.com/evdc/atelier/main/scripts/install-server.sh | sudo sh
+```
+
+It installs the release binary for your CPU, creates an `atelier` user, installs Claude Code for it, writes a systemd
+unit that listens on loopback and the tailnet address only, and prints what is left to do. Re-run it to upgrade. Set
+`ANTHROPIC_API_KEY=…` to skip the interactive Claude login, or `--bin ./atelierd` to install a binary you built.
+Releases come from `.github/workflows/release.yml` (push a `v*` tag).
+
+On each Mac, put the server's address in `~/.atelier/remote.json` (`{"url": "100.x.y.z"}`, plus `"token"` for a tagged
+or shared device) and relaunch. The app then only connects: it starts no local server. Delete the file to go back.
+
+
 ## macOS
 
 Atelier.app bundles `atelierd` and, on launch, installs `~/Library/LaunchAgents/sh.atelier.server.plist`

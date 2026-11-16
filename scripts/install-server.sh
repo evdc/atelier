@@ -119,11 +119,33 @@ done
 [ -n "$up" ] || { journalctl -u atelierd -n 20 --no-pager >&2; die "the server didn't come up on $TS_IP:7747 (log above)"; }
 
 TOKEN="$(cat "$HOME_DIR/.atelier/token" 2>/dev/null || true)"
-HOST="$(hostname)"
+# The tailnet IP always resolves; a MagicDNS name only does if the client has MagicDNS on.
+HOST="$TS_IP"
 
 # --- what's left, and how to connect -------------------------------------------------------------------------------
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  claude_step="  - Claude Code will use the ANTHROPIC_API_KEY you passed (stored in /etc/atelierd.env)."
+else
+  claude_step="  - Sign Claude Code in:   sudo -iu $USER_NAME claude        (or re-run with ANTHROPIC_API_KEY=... set)"
+fi
+
 cat <<EOF
 
 atelierd is running on $TS_IP:7747 (tailnet only), as user $USER_NAME.
 
 Still to do on this machine, once:
+$claude_step
+  - Put your repositories somewhere $USER_NAME can read, e.g.
+      sudo -iu $USER_NAME git clone <url> ~/Projects/<name>
+    (for pushing, give that user a deploy key: sudo -iu $USER_NAME ssh-keygen -t ed25519)
+
+On your laptop and desktop (macOS), then relaunch Atelier:
+
+  mkdir -p ~/.atelier && echo '{"url": "$HOST"}' > ~/.atelier/remote.json
+
+That makes the app a pure client: it starts no local server. Delete the file to go back to a local one.
+Your own tailnet devices need no token. If a device is tagged or shared, add one:
+
+  {"url": "$HOST", "token": "$TOKEN"}
+
+EOF

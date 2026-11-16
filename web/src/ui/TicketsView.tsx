@@ -22,16 +22,24 @@ export function TicketsView(props: { project: string }) {
   const row = () => board.list()[0];
   const [pending, setPending] = createSignal<Pending>(new Map());
   const cols = createMemo(() => (row() ? columns(row()!.config, overlay(tickets.list(), pending())) : []));
-  // Moves the rows have caught up with are done; settle returns the same map when nothing changed.
+  // Moves the rows have caught up with are done. Tracks `pending` and (inside settle) each row's status:
+  // a status change patches the row in place, so the list alone never changes and the move would stay
+  // pending forever, blocking any further move of that card.
   createEffect(() => {
-    const rows = tickets.list();
-    setPending((p) => settle(p, rows));
+    const p = pending();
+    const next = settle(p, tickets.list());
+    if (next !== p) setPending(next);
   });
 
   // Optimistic move: show it now, ask the server, and snap back with its message if it refuses.
   const [fail, setFail] = createSignal("");
   let failTimer = 0;
   onCleanup(() => clearTimeout(failTimer));
+  const showFail = (e: unknown) => {
+    setFail(e instanceof Error ? e.message : String(e));
+    clearTimeout(failTimer);
+    failTimer = window.setTimeout(() => setFail(""), 6000);
+  };
   const move = (key: string, to: string) => {
     const t = tickets.get(key);
     if (!t || t.status === to || pending().has(key)) return;
@@ -40,9 +48,7 @@ export function TicketsView(props: { project: string }) {
       .call("ticket.update", { project: props.project, ticket: t.id, status: to, expect: t.status })
       .catch((e: unknown) => {
         setPending((p) => withMove(p, key, null));
-        setFail(e instanceof Error ? e.message : String(e));
-        clearTimeout(failTimer);
-        failTimer = window.setTimeout(() => setFail(""), 6000);
+        showFail(e);
       });
   };
 
@@ -100,7 +106,7 @@ export function TicketsView(props: { project: string }) {
   const open = () => {
     const p = project();
     return p && canOpenIn(serverConfig()?.url ?? "")
-      ? (t: TicketRow) => void openIn("editor", `${p.path}/${t.path}`).catch(() => {})
+      ? (t: TicketRow) => void openIn("editor", `${p.path}/${t.path}`).catch(showFail)
       : undefined;
   };
 

@@ -9,7 +9,8 @@ export const DEFAULTS: BoardConfig = {
   columns: ["open", "in-progress", "done"].map((s) => ({ title: s, statuses: [s], collapsed: false })),
 };
 
-export const clone = (c: BoardConfig): BoardConfig => structuredClone(c);
+/** A plain deep copy. Not structuredClone: the config usually comes from a view's store, a Proxy, which it refuses. */
+export const clone = (c: BoardConfig): BoardConfig => JSON.parse(JSON.stringify(c)) as BoardConfig;
 
 const without = <T>(xs: readonly T[], i: number) => xs.filter((_, j) => j !== i);
 

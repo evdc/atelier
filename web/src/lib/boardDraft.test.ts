@@ -119,3 +119,15 @@ describe("orphaned", () => {
     ]);
   });
 });
+
+describe("clone", () => {
+  it("copies a config held in a store (a Proxy), which structuredClone refuses", () => {
+    const cfg: BoardConfig = { statuses: ["open", "done"], columns: [{ title: "To do", statuses: ["open"], collapsed: false }] };
+    const proxied = new Proxy(cfg, {});
+    expect(() => structuredClone(proxied)).toThrow();
+    const c = d.clone(proxied);
+    expect(c).toEqual(cfg);
+    c.columns[0]!.statuses.push("done");
+    expect(cfg.columns[0]!.statuses).toEqual(["open"]);
+  });
+});

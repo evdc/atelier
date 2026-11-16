@@ -1,0 +1,46 @@
+{
+  "columns": [
+    {
+      "collapsed": false,
+      "statuses": [
+        "open"
+      ],
+      "title": "open"
+    },
+    {
+      "collapsed": false,
+      "statuses": [
+        "up-next"
+      ],
+      "title": "up-next"
+    },
+    {
+      "collapsed": false,
+      "statuses": [
+        "in-progress"
+      ],
+      "title": "in-progress"
+    },
+    {
+      "collapsed": false,
+      "statuses": [
+        "review"
+      ],
+      "title": "review"
+    },
+    {
+      "collapsed": false,
+      "statuses": [
+        "done"
+      ],
+      "title": "done"
+    }
+  ],
+  "statuses": [
+    "open",
+    "in-progress",
+    "done",
+    "review",
+    "up-next"
+  ]
+}
